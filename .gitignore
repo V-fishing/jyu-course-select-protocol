@@ -1,0 +1,28 @@
+# Sensitive files
+.env
+accounts.json
+db_users_v7.json
+db_courses_v7.json
+courses_export.json
+courses_export.json.bak
+*.log
+*.key
+
+# Binaries
+*.exe
+chromedriver*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
