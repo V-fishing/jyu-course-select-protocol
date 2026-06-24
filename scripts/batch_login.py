@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
-from config import Config
-from data_manager import DataManager
-from utils import (
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from course_grabber.config import Config
+from course_grabber.data_manager import DataManager
+from course_grabber.utils import (
     build_chrome_driver,
     cookies_to_string,
     detect_captcha,

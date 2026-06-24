@@ -4,13 +4,19 @@ from __future__ import annotations
 
 import datetime
 import re
+import sys
 import tkinter as tk
+from pathlib import Path
 from tkinter import messagebox, scrolledtext, simpledialog, ttk
 
-from config import Config
-from data_manager import DataManager
-from grab_engine import GrabEngine, StatusEvent, TaskStatus
-from utils import extract_course_name, logger, parse_curl_data
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from course_grabber.config import Config
+from course_grabber.data_manager import DataManager
+from course_grabber.grab_engine import GrabEngine, StatusEvent, TaskStatus
+from course_grabber.utils import extract_course_name, logger, parse_curl_data
 
 
 class App:

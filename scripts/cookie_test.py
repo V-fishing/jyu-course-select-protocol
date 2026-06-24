@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import datetime
+import sys
 import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 import requests
 
-from config import Config
-from data_manager import DataManager
-from utils import logger
+from course_grabber.config import Config
+from course_grabber.data_manager import DataManager
+from course_grabber.utils import logger
 
 
 TARGET_URL = f"{Config.BASE_URL}/xtgl/index_initMenu.html?jsdm=xs"

@@ -5,9 +5,9 @@ from __future__ import annotations
 import uuid
 from typing import Callable
 
-from config import Config
-from crypto_helper import CookieCrypto
-from utils import load_json, save_json
+from course_grabber.config import Config
+from course_grabber.crypto_helper import CookieCrypto
+from course_grabber.utils import load_json, save_json
 
 
 class DataManager:

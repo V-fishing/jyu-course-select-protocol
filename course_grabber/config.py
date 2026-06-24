@@ -5,7 +5,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-_BASE_DIR = Path(__file__).resolve().parent
+_BASE_DIR = Path(__file__).resolve().parent.parent
+_DATA_DIR = _BASE_DIR / "data"
 _ENV_PATH = _BASE_DIR / ".env"
 if _ENV_PATH.exists():
     load_dotenv(dotenv_path=_ENV_PATH, override=True)
@@ -16,10 +17,11 @@ class Config:
 
     # 路径
     BASE_DIR = _BASE_DIR
-    COURSE_DB_FILE = str(BASE_DIR / "courses_export.json")
-    USER_DB_FILE = str(BASE_DIR / "db_users_v7.json")
+    DATA_DIR = _DATA_DIR
+    COURSE_DB_FILE = str(DATA_DIR / "courses_export.json")
+    USER_DB_FILE = str(DATA_DIR / "db_users_v7.json")
     ACCOUNTS_FILE = str(BASE_DIR / "accounts.json")
-    LOG_FILE = str(BASE_DIR / "app.log")
+    LOG_FILE = str(DATA_DIR / "app.log")
 
     # URL
     BASE_URL = os.getenv("BASE_URL", "http://210.38.162.118").rstrip("/")

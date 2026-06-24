@@ -1,16 +1,16 @@
 # Sensitive files
 .env
 accounts.json
-db_users_v7.json
-db_courses_v7.json
-courses_export.json
-courses_export.json.bak
-*.log
+data/db_users_v7.json
+data/db_courses_v7.json
+data/courses_export.json
+data/courses_export.json.bak
+data/*.log
 *.key
 
 # Binaries
 *.exe
-chromedriver*
+drivers/chromedriver*
 
 # Python
 __pycache__/

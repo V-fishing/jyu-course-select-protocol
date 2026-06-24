@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 import urllib3
 
-from config import Config
+from course_grabber.config import Config
 
 if TYPE_CHECKING:
     from selenium.webdriver.remote.webdriver import WebDriver
@@ -114,7 +114,7 @@ def build_chrome_driver(
         service = Service(ChromeDriverManager().install())
     except Exception as exc:
         logger.warning("ChromeDriverManager failed (%s), falling back to chromedriver.exe", exc)
-        service = Service("chromedriver.exe")
+        service = Service(str(Config.BASE_DIR / "drivers" / "chromedriver.exe"))
 
     driver = webdriver.Chrome(service=service, options=options)
     driver.execute_cdp_cmd(

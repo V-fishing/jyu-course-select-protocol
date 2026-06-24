@@ -8,7 +8,7 @@ from __future__ import annotations
 import base64
 import os
 
-from config import Config
+from course_grabber.config import Config
 
 try:
     from cryptography.fernet import Fernet, InvalidToken

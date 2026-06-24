@@ -12,8 +12,8 @@ from typing import Any, Callable
 
 import requests
 
-from config import Config
-from utils import logger, random_delay
+from course_grabber.config import Config
+from course_grabber.utils import logger, random_delay
 
 
 class TaskStatus(str, Enum):
