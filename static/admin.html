@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>抢课管理端</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            margin: 0; padding: 20px; background: #f5f5f5; color: #333;
+        }
+        .container { max-width: 1000px; margin: 0 auto; }
+        h1 { margin-bottom: 10px; }
+        .subtitle { color: #666; margin-bottom: 20px; }
+        .card {
+            background: #fff; border-radius: 8px; padding: 20px; margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        label { display: block; margin: 12px 0 6px; font-weight: 500; }
+        input, select, button, textarea {
+            width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 4px;
+            font-size: 14px;
+        }
+        button {
+            background: #0066ff; color: #fff; border: none; cursor: pointer; margin-top: 15px;
+            font-weight: 500;
+        }
+        button:hover { background: #0052cc; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        .danger { background: #dc3545; }
+        .danger:hover { background: #c82333; }
+        .success { background: #28a745; }
+        .success:hover { background: #218838; }
+        .secondary { background: #6c757d; }
+        .secondary:hover { background: #5a6268; }
+        .captcha-row { display: flex; gap: 10px; align-items: flex-end; }
+        .captcha-row input { flex: 1; }
+        .captcha-row img {
+            height: 42px; cursor: pointer; border: 1px solid #ddd; border-radius: 4px;
+            background: #fff;
+        }
+        .status {
+            margin-top: 12px; padding: 10px; border-radius: 4px; font-size: 14px;
+            display: none;
+        }
+        .status.show { display: block; }
+        .status.ok { background: #d4edda; color: #155724; }
+        .status.error { background: #f8d7da; color: #721c24; }
+        .status.info { background: #fff3cd; color: #856404; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } }
+        .course-list {
+            max-height: 300px; overflow-y: auto; border: 1px solid #eee; border-radius: 4px;
+            padding: 10px;
+        }
+        .course-item {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 8px; border-bottom: 1px solid #f0f0f0;
+        }
+        .course-item:last-child { border-bottom: none; }
+        .course-item span { flex: 1; }
+        .course-item small { color: #999; margin-left: 8px; }
+        .empty { color: #999; text-align: center; padding: 20px; }
+        .section-title { margin-top: 0; margin-bottom: 15px; }
+        .hint { background: #e7f3ff; border-left: 4px solid #0066ff; padding: 10px; margin-bottom: 15px; color: #004085; font-size: 13px; }
+        .btn-row { display: flex; gap: 10px; }
+        .btn-row button { flex: 1; }
+        .logs {
+            background: #1e1e1e; color: #d4d4d4; font-family: Consolas, Monaco, monospace;
+            height: 220px; overflow-y: auto; padding: 10px; border-radius: 4px; white-space: pre-wrap;
+            font-size: 13px;
+        }
+        .log-line { margin-bottom: 4px; }
+        .log-success { color: #4ec9b0; }
+        .log-error { color: #f48771; }
+        .log-info { color: #9cdcfe; }
+        .log-warn { color: #ce9178; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>抢课管理端</h1>
+    <div class="subtitle">管理课程数据、导入课程库、爬取学校课程</div>
+
+    <div class="card" id="loginCard">
+        <h3 class="section-title">管理员登录</h3>
+        <div class="hint">
+            管理口令保存在服务端配置中（默认与 .env 的 COOKIE_KEY 一致）。登录成功后，该账号将用于爬取学校课程信息。
+        </div>
+        <label>管理口令</label>
+        <input type="password" id="token" placeholder="请输入管理口令">
+        <label>学号（用于爬取课程的账号）</label>
+        <input type="text" id="username" placeholder="请输入学号">
+        <label>密码</label>
+        <input type="password" id="password" placeholder="请输入密码">
+        <div class="captcha-row">
+            <div style="flex:1;">
+                <label>验证码</label>
+                <input type="text" id="captcha" placeholder="点击右侧图片刷新">
+            </div>
+            <img id="captchaImg" onclick="loadCaptcha()" src="" alt="验证码" title="点击刷新">
+        </div>
+        <button onclick="doLogin()" id="loginBtn">管理员登录</button>
+        <div class="status" id="loginStatus"></div>
+    </div>
+
+    <div id="adminPanel" style="display:none;">
+        <div class="card">
+            <h3 class="section-title">课程库管理</h3>
+            <div class="grid">
+                <div>
+                    <h4 style="margin-top:0;">从本地文件导入</h4>
+                    <label>选择课程数据文件</label>
+                    <select id="courseFileSelect">
+                        <option value="">请先加载文件列表</option>
+                    </select>
+                    <div class="btn-row">
+                        <button class="secondary" onclick="loadCourseFiles()">刷新列表</button>
+                        <button class="success" onclick="importCourses()">导入课程</button>
+                    </div>
+                    <div class="status" id="importStatus"></div>
+                </div>
+                <div>
+                    <h4 style="margin-top:0;">在线爬取课程</h4>
+                    <p style="font-size:13px;color:#666;margin:0 0 10px;">
+                        使用已登录的管理员账号，通过 Selenium 自动登录并爬取全校课程数据。爬取完成后会自动刷新课程库。
+                    </p>
+                    <button class="success" onclick="scrapeCourses()" id="scrapeBtn">开始爬取课程</button>
+                    <div class="status" id="scrapeStatus"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <h3 class="section-title" style="margin:0;">当前课程列表</h3>
+                <button class="secondary" onclick="loadCourses()" style="width:auto;margin:0;">刷新</button>
+            </div>
+            <div class="course-list" id="courseList">
+                <div class="empty">正在加载课程列表...</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3 class="section-title">操作日志</h3>
+            <div class="logs" id="logs"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+let token = localStorage.getItem('cg_admin_token') || '';
+let captchaSession = null;
+let adminLoggedIn = false;
+
+document.getElementById('token').value = token;
+
+document.getElementById('token').addEventListener('keypress', e => { if (e.key === 'Enter') doLogin(); });
+document.getElementById('username').addEventListener('keypress', e => { if (e.key === 'Enter') doLogin(); });
+document.getElementById('password').addEventListener('keypress', e => { if (e.key === 'Enter') doLogin(); });
+document.getElementById('captcha').addEventListener('keypress', e => { if (e.key === 'Enter') doLogin(); });
+
+function showStatus(id, text, type) {
+    const el = document.getElementById(id);
+    el.textContent = text;
+    el.className = 'status show ' + (type || 'info');
+}
+
+function hideStatus(id) {
+    const el = document.getElementById(id);
+    el.className = 'status';
+    el.textContent = '';
+}
+
+function appendLog(text, type) {
+    const logs = document.getElementById('logs');
+    const line = document.createElement('div');
+    line.className = 'log-line ' + (type ? 'log-' + type : '');
+    const time = new Date().toLocaleTimeString();
+    line.textContent = `[${time}] ${text}`;
+    logs.appendChild(line);
+    logs.scrollTop = logs.scrollHeight;
+}
+
+async function api(path, options = {}) {
+    let url = path;
+    const sep = path.includes('?') ? '&' : '?';
+    url += `${sep}token=${encodeURIComponent(token)}`;
+    const res = await fetch(url, options);
+    if (res.status === 403) throw new Error('管理口令错误');
+    if (!res.ok) {
+        let detail = '';
+        try { detail = await res.json(); } catch {}
+        if (typeof detail === 'object' && detail.detail) detail = detail.detail;
+        throw new Error(detail || `HTTP ${res.status}`);
+    }
+    return res.json();
+}
+
+async function loadCaptcha() {
+    try {
+        const data = await api('/api/captcha');
+        captchaSession = data;
+        document.getElementById('captchaImg').src = data.image_base64;
+        document.getElementById('captcha').value = '';
+    } catch (e) {
+        showStatus('loginStatus', '验证码加载失败：' + e.message, 'error');
+    }
+}
+
+async function doLogin() {
+    token = document.getElementById('token').value.trim();
+    const username = document.getElementById('username').value.trim();
+    const password = document.getElementById('password').value;
+    const captcha = document.getElementById('captcha').value.trim();
+    if (!token || !username || !password || !captcha || !captchaSession) {
+        showStatus('loginStatus', '请填写完整信息并获取验证码', 'error');
+        return;
+    }
+    localStorage.setItem('cg_admin_token', token);
+    const btn = document.getElementById('loginBtn');
+    btn.disabled = true;
+    btn.textContent = '登录中...';
+    try {
+        const result = await api('/api/admin/login', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                token,
+                session_id: captchaSession.session_id,
+                username,
+                password,
+                captcha,
+                captcha_ts: captchaSession.captcha_ts,
+                csrftoken: captchaSession.csrftoken,
+                hidden_fields: captchaSession.hidden_fields,
+            })
+        });
+        adminLoggedIn = true;
+        document.getElementById('password').value = '';
+        document.getElementById('loginCard').style.display = 'none';
+        document.getElementById('adminPanel').style.display = 'block';
+        appendLog(`管理员登录成功：${result.username}`, 'success');
+        loadCourses();
+        loadCourseFiles();
+    } catch (e) {
+        let msg = e.message;
+        if (msg.includes('口令')) {
+            appendLog('管理口令错误', 'error');
+        } else if (msg.includes('验证码')) {
+            appendLog('验证码错误', 'error');
+        } else if (msg.includes('密码')) {
+            appendLog('账号密码错误', 'error');
+        } else {
+            appendLog('登录失败：' + msg, 'error');
+        }
+        showStatus('loginStatus', '登录失败：' + msg, 'error');
+        loadCaptcha();
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '管理员登录';
+    }
+}
+
+async function loadCourses() {
+    if (!adminLoggedIn) return;
+    try {
+        const courses = await api('/api/admin/courses');
+        renderCourseList(courses);
+    } catch (e) {
+        appendLog('加载课程列表失败：' + e.message, 'error');
+    }
+}
+
+function renderCourseList(courses) {
+    const container = document.getElementById('courseList');
+    container.innerHTML = '';
+    const entries = Object.entries(courses);
+    if (entries.length === 0) {
+        container.innerHTML = '<div class="empty">课程库为空，请先导入或爬取课程</div>';
+        return;
+    }
+    for (const [uid, info] of entries) {
+        const div = document.createElement('div');
+        div.className = 'course-item';
+        div.innerHTML = `
+            <span>${info.name}</small>${info.kch_id || uid}</small></span>
+        `;
+        container.appendChild(div);
+    }
+}
+
+async function loadCourseFiles() {
+    if (!adminLoggedIn) return;
+    try {
+        const res = await api('/api/admin/course_files');
+        const select = document.getElementById('courseFileSelect');
+        select.innerHTML = '';
+        if (!res.files || res.files.length === 0) {
+            select.innerHTML = '<option value="">data/ 目录下暂无课程 JSON 文件</option>';
+            showStatus('importStatus', '请先把课程 JSON 文件放到 data/ 目录', 'info');
+            return;
+        }
+        for (const f of res.files) {
+            const opt = document.createElement('option');
+            opt.value = f.name;
+            opt.textContent = `${f.name}（${f.count} 门课程）`;
+            select.appendChild(opt);
+        }
+        showStatus('importStatus', `找到 ${res.files.length} 个课程文件`, 'ok');
+    } catch (e) {
+        showStatus('importStatus', '加载文件列表失败：' + e.message, 'error');
+    }
+}
+
+async function importCourses() {
+    const filename = document.getElementById('courseFileSelect').value;
+    if (!filename) {
+        showStatus('importStatus', '请先选择课程文件', 'error');
+        return;
+    }
+    try {
+        const res = await api('/api/admin/courses/import', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({token, filename})
+        });
+        showStatus('importStatus',
+            `导入完成：新增 ${res.imported} 门，跳过重复 ${res.skipped} 门，文件共 ${res.total} 门`, 'ok');
+        appendLog(`导入课程：新增 ${res.imported} 门，跳过 ${res.skipped} 门`, 'success');
+        loadCourses();
+    } catch (e) {
+        showStatus('importStatus', '导入失败：' + e.message, 'error');
+        appendLog('导入失败：' + e.message, 'error');
+    }
+}
+
+async function scrapeCourses() {
+    const btn = document.getElementById('scrapeBtn');
+    btn.disabled = true;
+    btn.textContent = '爬取中...';
+    try {
+        const res = await api('/api/admin/courses/scrape', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({token})
+        });
+        showStatus('scrapeStatus', res.message, 'ok');
+        appendLog('课程爬取任务已在后台启动', 'success');
+        // 轮询检查课程库是否更新
+        let checks = 0;
+        const timer = setInterval(async () => {
+            checks++;
+            await loadCourses();
+            if (checks >= 30) {
+                clearInterval(timer);
+                appendLog('课程库已刷新（或仍在爬取中）', 'info');
+                btn.disabled = false;
+                btn.textContent = '开始爬取课程';
+            }
+        }, 5000);
+    } catch (e) {
+        showStatus('scrapeStatus', '爬取启动失败：' + e.message, 'error');
+        appendLog('爬取启动失败：' + e.message, 'error');
+        btn.disabled = false;
+        btn.textContent = '开始爬取课程';
+    }
+}
+
+loadCaptcha();
+</script>
+</body>
+</html>

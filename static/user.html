@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>抢课用户端</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            margin: 0; padding: 20px; background: #f5f5f5; color: #333;
+        }
+        .container { max-width: 900px; margin: 0 auto; }
+        h1 { margin-bottom: 10px; }
+        .subtitle { color: #666; margin-bottom: 20px; }
+        .card {
+            background: #fff; border-radius: 8px; padding: 20px; margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        label { display: block; margin: 12px 0 6px; font-weight: 500; }
+        input, select, button {
+            width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 4px;
+            font-size: 14px;
+        }
+        button {
+            background: #0066ff; color: #fff; border: none; cursor: pointer; margin-top: 15px;
+            font-weight: 500;
+        }
+        button:hover { background: #0052cc; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        .danger { background: #dc3545; }
+        .danger:hover { background: #c82333; }
+        .success { background: #28a745; }
+        .success:hover { background: #218838; }
+        .captcha-row { display: flex; gap: 10px; align-items: flex-end; }
+        .captcha-row input { flex: 1; }
+        .captcha-row img {
+            height: 42px; cursor: pointer; border: 1px solid #ddd; border-radius: 4px;
+            background: #fff;
+        }
+        .status {
+            margin-top: 12px; padding: 10px; border-radius: 4px; font-size: 14px;
+            display: none;
+        }
+        .status.show { display: block; }
+        .status.ok { background: #d4edda; color: #155724; }
+        .status.error { background: #f8d7da; color: #721c24; }
+        .status.info { background: #fff3cd; color: #856404; }
+        .course-list {
+            max-height: 320px; overflow-y: auto; border: 1px solid #eee; border-radius: 4px;
+            padding: 10px;
+        }
+        .course-item {
+            display: flex; align-items: center; gap: 10px; padding: 8px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        .course-item:last-child { border-bottom: none; }
+        .course-item input { width: auto; margin: 0; }
+        .course-item label { margin: 0; font-weight: normal; cursor: pointer; flex: 1; }
+        .empty { color: #999; text-align: center; padding: 20px; }
+        .btn-row { display: flex; gap: 10px; }
+        .btn-row button { flex: 1; }
+        .logs {
+            background: #1e1e1e; color: #d4d4d4; font-family: Consolas, Monaco, monospace;
+            height: 280px; overflow-y: auto; padding: 10px; border-radius: 4px; white-space: pre-wrap;
+            font-size: 13px;
+        }
+        .log-line { margin-bottom: 4px; }
+        .log-success { color: #4ec9b0; }
+        .log-error { color: #f48771; }
+        .log-info { color: #9cdcfe; }
+        .log-warn { color: #ce9178; }
+        .user-info { display: flex; justify-content: space-between; align-items: center; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>抢课用户端</h1>
+    <div class="subtitle">登录后选择课程，一键开始抢课</div>
+
+    <div class="card" id="loginCard">
+        <h3>1. 登录教务系统</h3>
+        <label>学号</label>
+        <input type="text" id="username" placeholder="请输入学号">
+        <label>密码</label>
+        <input type="password" id="password" placeholder="请输入密码">
+        <div class="captcha-row">
+            <div style="flex:1;">
+                <label>验证码</label>
+                <input type="text" id="captcha" placeholder="点击右侧图片刷新">
+            </div>
+            <img id="captchaImg" onclick="loadCaptcha()" src="" alt="验证码" title="点击刷新">
+        </div>
+        <button onclick="doLogin()" id="loginBtn">登录</button>
+        <div class="status" id="loginStatus"></div>
+    </div>
+
+    <div class="card" id="taskCard" style="display:none;">
+        <div class="user-info">
+            <h3>2. 选择课程</h3>
+            <span id="currentUser"></span>
+        </div>
+        <div class="course-list" id="courseList">
+            <div class="empty">正在加载课程列表...</div>
+        </div>
+        <div style="margin-top:10px;">
+            <label>
+                <input type="checkbox" id="selectAll" onchange="toggleSelectAll()"> 全选
+            </label>
+        </div>
+        <div class="btn-row">
+            <button class="success" onclick="startTask()" id="startBtn">开始抢课</button>
+            <button class="danger" onclick="stopTask()" id="stopBtn" disabled>停止抢课</button>
+        </div>
+        <div class="status" id="taskStatus"></div>
+    </div>
+
+    <div class="card">
+        <h3>实时日志</h3>
+        <div class="logs" id="logs"></div>
+    </div>
+</div>
+
+<script>
+let captchaSession = null;
+let userSession = null;
+let currentTaskId = null;
+let ws = null;
+
+document.getElementById('username').addEventListener('keypress', e => { if (e.key === 'Enter') doLogin(); });
+document.getElementById('password').addEventListener('keypress', e => { if (e.key === 'Enter') doLogin(); });
+document.getElementById('captcha').addEventListener('keypress', e => { if (e.key === 'Enter') doLogin(); });
+
+function showStatus(id, text, type) {
+    const el = document.getElementById(id);
+    el.textContent = text;
+    el.className = 'status show ' + (type || 'info');
+}
+
+function hideStatus(id) {
+    const el = document.getElementById(id);
+    el.className = 'status';
+    el.textContent = '';
+}
+
+function appendLog(text, type) {
+    const logs = document.getElementById('logs');
+    const line = document.createElement('div');
+    line.className = 'log-line ' + (type ? 'log-' + type : '');
+    const time = new Date().toLocaleTimeString();
+    line.textContent = `[${time}] ${text}`;
+    logs.appendChild(line);
+    logs.scrollTop = logs.scrollHeight;
+}
+
+async function api(path, options = {}) {
+    const res = await fetch(path, options);
+    if (!res.ok) {
+        let detail = '';
+        try { detail = await res.json(); } catch {}
+        if (typeof detail === 'object' && detail.detail) detail = detail.detail;
+        throw new Error(detail || `HTTP ${res.status}`);
+    }
+    return res.json();
+}
+
+async function loadCaptcha() {
+    try {
+        const data = await api('/api/captcha');
+        captchaSession = data;
+        document.getElementById('captchaImg').src = data.image_base64;
+        document.getElementById('captcha').value = '';
+        document.getElementById('captcha').focus();
+    } catch (e) {
+        showStatus('loginStatus', '验证码加载失败：' + e.message, 'error');
+    }
+}
+
+async function doLogin() {
+    const username = document.getElementById('username').value.trim();
+    const password = document.getElementById('password').value;
+    const captcha = document.getElementById('captcha').value.trim();
+    if (!username || !password || !captcha || !captchaSession) {
+        showStatus('loginStatus', '请填写学号、密码、验证码，并获取验证码图片', 'error');
+        return;
+    }
+    const btn = document.getElementById('loginBtn');
+    btn.disabled = true;
+    btn.textContent = '登录中...';
+    try {
+        const result = await api('/api/user/login', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                session_id: captchaSession.session_id,
+                username,
+                password,
+                captcha,
+                captcha_ts: captchaSession.captcha_ts,
+                csrftoken: captchaSession.csrftoken,
+                hidden_fields: captchaSession.hidden_fields,
+            })
+        });
+        userSession = result.session_id;
+        document.getElementById('currentUser').textContent = `${result.username} 已登录`;
+        document.getElementById('password').value = '';
+        document.getElementById('loginCard').style.display = 'none';
+        document.getElementById('taskCard').style.display = 'block';
+        showStatus('taskStatus', '登录成功，请选择课程', 'ok');
+        appendLog(`登录成功：${result.username}`, 'success');
+        loadCourses();
+    } catch (e) {
+        let msg = e.message;
+        if (msg.includes('验证码')) {
+            appendLog('验证码错误，请重新输入', 'error');
+        } else if (msg.includes('密码')) {
+            appendLog('密码错误，请确认后重试', 'error');
+        } else if (msg.includes('账号') || msg.includes('用户')) {
+            appendLog('账号不存在或状态异常', 'error');
+        } else {
+            appendLog('登录失败：' + msg, 'error');
+        }
+        showStatus('loginStatus', '登录失败：' + msg, 'error');
+        loadCaptcha();
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '登录';
+    }
+}
+
+async function loadCourses() {
+    try {
+        const courses = await api('/api/user/courses');
+        renderCourseList(courses);
+    } catch (e) {
+        showStatus('taskStatus', '课程加载失败：' + e.message, 'error');
+    }
+}
+
+function renderCourseList(courses) {
+    const container = document.getElementById('courseList');
+    container.innerHTML = '';
+    const entries = Object.entries(courses);
+    if (entries.length === 0) {
+        container.innerHTML = '<div class="empty">暂无课程，请联系管理员导入课程数据</div>';
+        return;
+    }
+    for (const [uid, info] of entries) {
+        const div = document.createElement('div');
+        div.className = 'course-item';
+        div.innerHTML = `
+            <input type="checkbox" id="c_${uid}" value="${uid}">
+            <label for="c_${uid}">${info.name}${info.kch_id ? '（' + info.kch_id + '）' : ''}</label>
+        `;
+        container.appendChild(div);
+    }
+}
+
+function toggleSelectAll() {
+    const checked = document.getElementById('selectAll').checked;
+    document.querySelectorAll('#courseList input[type="checkbox"]').forEach(cb => cb.checked = checked);
+}
+
+async function startTask() {
+    if (!userSession) {
+        showStatus('taskStatus', '请先登录', 'error');
+        return;
+    }
+    const selected = Array.from(document.querySelectorAll('#courseList input[type="checkbox"]:checked')).map(el => el.value);
+    if (selected.length === 0) {
+        showStatus('taskStatus', '请至少选择一门课程', 'error');
+        return;
+    }
+    const btn = document.getElementById('startBtn');
+    btn.disabled = true;
+    try {
+        const res = await api('/api/user/tasks', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({session_id: userSession, courses: selected})
+        });
+        currentTaskId = res.task_id;
+        document.getElementById('stopBtn').disabled = false;
+        showStatus('taskStatus', `任务已启动，共 ${res.launched} 门课程`, 'ok');
+        appendLog(`任务启动：${res.task_id}，共 ${res.launched} 门课程`, 'success');
+        connectWs(res.task_id);
+    } catch (e) {
+        showStatus('taskStatus', '启动失败：' + e.message, 'error');
+        appendLog('启动失败：' + e.message, 'error');
+        btn.disabled = false;
+    }
+}
+
+async function stopTask() {
+    if (!currentTaskId) return;
+    try {
+        await api(`/api/user/tasks/${currentTaskId}/stop`, {method: 'POST'});
+        showStatus('taskStatus', '已停止全部任务', 'info');
+        appendLog('已停止全部任务', 'warn');
+    } catch (e) {
+        showStatus('taskStatus', '停止失败：' + e.message, 'error');
+    }
+    document.getElementById('startBtn').disabled = false;
+    document.getElementById('stopBtn').disabled = true;
+}
+
+function connectWs(taskId) {
+    if (ws) ws.close();
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(`${proto}//${location.host}/ws/user/${taskId}`);
+    ws.onopen = () => appendLog('日志连接已建立', 'info');
+    ws.onmessage = (ev) => {
+        const msg = JSON.parse(ev.data);
+        let type = 'info';
+        const status = msg.status || '';
+        if (status.includes('成功')) type = 'success';
+        else if (status.includes('失败') || status.includes('错误') || status.includes('失效')) type = 'error';
+        else if (status.includes('停止')) type = 'warn';
+        const text = `${msg.user} / ${msg.course} → ${msg.status}${msg.message ? ' | ' + msg.message : ''}`;
+        appendLog(text, type);
+        if (msg.finished) {
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            appendLog('任务已结束', 'warn');
+        }
+    };
+    ws.onclose = () => appendLog('日志连接已关闭', 'warn');
+    ws.onerror = (e) => appendLog('日志连接异常', 'error');
+}
+
+loadCaptcha();
+</script>
+</body>
+</html>
