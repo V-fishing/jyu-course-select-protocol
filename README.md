@@ -33,7 +33,8 @@
 │   ├── utils.py             # 公共工具（WebDriver、登录、Cookie、JSON、延迟等）
 │   ├── data_manager.py      # 课程/用户数据持久化
 │   ├── crypto_helper.py     # Cookie 加密/解密
-│   └── grab_engine.py       # 抢课任务调度与状态队列
+│   ├── grab_engine.py       # 抢课任务调度与状态队列
+│   └── web_login.py         # 基于 Requests + RSA 的登录（Web 服务用）
 │
 ├── scripts/                 # 命令行入口
 │   ├── batch_login.py       # 批量登录脚本
@@ -42,6 +43,11 @@
 │
 ├── gui/                     # 图形界面
 │   └── final_spider_GUI.py  # 主程序图形界面
+│
+├── web_server.py            # FastAPI Web 服务后端
+├── run_web.py               # Web 服务启动器（支持 ngrok）
+├── static/                  # Web 前端页面
+│   └── index.html
 │
 ├── drivers/                 # WebDriver 二进制
 │   └── chromedriver.exe     # 不提交到 Git
@@ -146,12 +152,27 @@ python scripts/cookie_test.py
 python gui/final_spider_GUI.py
 ```
 
-在界面中：
+### 方式三：Web 控制台（支持远程访问）
 
-1. 加载课程库与用户库。
-2. 选择目标课程和目标用户。
-3. 点击开始，监控任务状态。
-4. 支持全局暂停/恢复/停止。
+适合多人临时共用一台电脑抢课，可通过 ngrok 暴露公网入口。
+
+```bash
+# 本地启动
+python run_web.py
+
+# 带 ngrok 公网隧道启动
+python run_web.py --ngrok --open
+```
+
+启动后：
+
+1. 打开浏览器访问控制台（本地 `http://localhost:8000`，ngrok 模式下使用分配的 HTTPS 地址）。
+2. 输入访问口令（`.env` 中的 `COOKIE_KEY`，未设置则默认 `course-grabber-web`）。
+3. 在“登录”页输入账号、密码、验证码，获取 Cookie。
+4. 在“课程管理”页粘贴选课请求的 cURL 或 form data。
+5. 选择用户和课程，点击“开始抢课”，实时查看日志。
+
+> 注意：Web 服务会接收用户的账号密码进行登录，但**不会保存密码**，只保存 Cookie。使用 ngrok 时请确保访问口令足够复杂，并仅分享给可信人员。
 
 ---
 
@@ -162,8 +183,11 @@ python gui/final_spider_GUI.py
 | `scripts/batch_login.py` | 读取 `accounts.json`，并发登录，保存 Cookie 到用户数据库 |
 | `scripts/get_course_json.py` | 单账号登录，自动点击查询，提取课程表单参数 |
 | `scripts/cookie_test.py` | 单个或批量检测 Cookie 存活状态 |
-| `gui/final_spider_GUI.py` | 抢课主界面，负责任务派发与状态展示 |
+| `web_server.py` | FastAPI Web 服务后端（验证码/登录/Cookie/抢课/WebSocket 日志） |
+| `run_web.py` | Web 服务启动器，支持本地运行和 ngrok 公网隧道 |
+| `gui/final_spider_GUI.py` | 本地 Tkinter 抢课主界面 |
 | `course_grabber/grab_engine.py` | 抢课核心引擎，管理多线程任务队列 |
+| `course_grabber/web_login.py` | 基于 Requests + RSA + 验证码的登录模块 |
 | `course_grabber/data_manager.py` | 课程/用户 JSON 数据管理 |
 | `course_grabber/crypto_helper.py` | Cookie 加解密工具 |
 | `course_grabber/config.py` | 全局配置读取 |
