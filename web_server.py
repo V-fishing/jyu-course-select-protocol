@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import sys
 import threading
 import time
+import urllib.parse
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -211,6 +213,99 @@ async def api_delete_user(remark: str, token: str = Query(...)):
 
 
 # ---------------------- 课程管理 ----------------------
+
+# 合法的课程数据文件，限制在 data/ 目录内
+def _list_course_files() -> list[dict[str, Any]]:
+    data_dir = Config.DATA_DIR
+    files = []
+    for path in sorted(data_dir.glob("*.json")):
+        if path.name in ("db_users_v7.json",):
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            count = len(data) if isinstance(data, dict) else 0
+            files.append({"name": path.name, "count": count, "path": str(path)})
+        except Exception:
+            pass
+    return files
+
+
+def _extract_course_name(item: dict[str, Any]) -> str:
+    """从课程条目中提取可读名称。"""
+    name = str(item.get("name", "")).strip()
+    if name and not name.lower().startswith("course_") and not name.lower().startswith("undefined"):
+        return name
+
+    data = item.get("data", "")
+    match = re.search(r"kcmc=([^&]+)", data)
+    if match:
+        try:
+            decoded = urllib.parse.unquote(match.group(1)).replace("+", " ")
+            decoded = re.sub(r"^\(\d+\)\s*", "", decoded)
+            decoded = re.sub(r"\s*[-+]?\d+\.0\s*学分\s*$", "", decoded)
+            decoded = decoded.strip()
+            if decoded:
+                return decoded
+        except Exception:
+            pass
+
+    kch_id = str(item.get("kch_id", "")).strip()
+    if kch_id and kch_id not in ("undefined", "leftpage", "rightpage"):
+        return f"课程 {kch_id}"
+
+    return name or "未命名课程"
+
+
+@app.get("/api/course_files")
+async def api_course_files(token: str = Query(...)):
+    _require_token(token)
+    return {"files": _list_course_files()}
+
+
+@app.post("/api/courses/import")
+async def api_import_courses(payload: dict[str, Any]):
+    _require_token(payload.get("token", ""))
+    filename = payload.get("filename", "").strip()
+    if not filename:
+        raise HTTPException(status_code=400, detail="请选择课程文件")
+
+    # 严格限制文件路径，防止目录遍历
+    data_dir = Config.DATA_DIR
+    target = (data_dir / filename).resolve()
+    if not str(target).startswith(str(data_dir.resolve())) or not target.exists():
+        raise HTTPException(status_code=400, detail="课程文件不存在或路径非法")
+
+    try:
+        raw = json.loads(target.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"读取课程文件失败: {exc}")
+
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=400, detail="课程文件格式不正确，应为对象")
+
+    imported = 0
+    skipped = 0
+    existing_data = {info["data"] for info in _courses.values()}
+
+    for uid, item in raw.items():
+        if not isinstance(item, dict):
+            continue
+        data = item.get("data", "")
+        if not data:
+            continue
+        if data in existing_data:
+            skipped += 1
+            continue
+
+        name = _extract_course_name(item)
+        kch_id = str(item.get("kch_id", "")).strip()
+        new_uid = str(uuid.uuid4())
+        _courses[new_uid] = {"name": name, "kch_id": kch_id, "data": data}
+        existing_data.add(data)
+        imported += 1
+
+    return {"success": True, "imported": imported, "skipped": skipped, "total": len(raw)}
+
 
 @app.get("/api/courses")
 async def api_courses(token: str = Query(...)):

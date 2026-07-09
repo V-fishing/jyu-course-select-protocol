@@ -95,6 +95,20 @@
 
         <div class="card">
             <h3>2. 课程管理</h3>
+
+            <div style="background:#f8f9fa; padding:15px; border-radius:6px; margin-bottom:15px;">
+                <h4 style="margin-top:0;">从本地课程库导入</h4>
+                <label>选择课程数据文件</label>
+                <select id="courseFileSelect">
+                    <option value="">请先加载文件列表</option>
+                </select>
+                <button onclick="loadCourseFiles()">刷新文件列表</button>
+                <button class="success" onclick="importCourses()">导入到课程列表</button>
+                <div class="msg" id="importMsg"></div>
+            </div>
+
+            <hr style="border:none; border-top:1px solid #eee; margin:20px 0;">
+
             <label>课程名称</label>
             <input type="text" id="courseName" placeholder="例如：大学英语">
             <label>课程提交数据（从 cURL 复制或 jxb_ids=...）</label>
@@ -297,6 +311,48 @@ async function deleteCourse(uid) {
     loadCourses();
 }
 
+async function loadCourseFiles() {
+    try {
+        const res = await api('/api/course_files');
+        const select = document.getElementById('courseFileSelect');
+        select.innerHTML = '';
+        if (!res.files || res.files.length === 0) {
+            select.innerHTML = '<option value="">data/ 目录下暂无课程 JSON 文件</option>';
+            document.getElementById('importMsg').textContent = '请先把课程 JSON 文件放到 data/ 目录';
+            return;
+        }
+        for (const f of res.files) {
+            const opt = document.createElement('option');
+            opt.value = f.name;
+            opt.textContent = `${f.name}（${f.count} 门课程）`;
+            select.appendChild(opt);
+        }
+        document.getElementById('importMsg').textContent = `找到 ${res.files.length} 个文件`;
+    } catch (e) {
+        document.getElementById('importMsg').textContent = '加载文件列表失败：' + e.message;
+    }
+}
+
+async function importCourses() {
+    const filename = document.getElementById('courseFileSelect').value;
+    if (!filename) {
+        document.getElementById('importMsg').textContent = '请先选择课程文件';
+        return;
+    }
+    try {
+        const res = await api('/api/courses/import', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({token, filename})
+        });
+        document.getElementById('importMsg').textContent =
+            `导入完成：新增 ${res.imported} 门，跳过重复 ${res.skipped} 门，文件共 ${res.total} 门`;
+        loadCourses();
+    } catch (e) {
+        document.getElementById('importMsg').textContent = '导入失败：' + e.message;
+    }
+}
+
 async function startTask() {
     const users = Array.from(document.querySelectorAll('input[name="taskUser"]:checked')).map(el => el.value);
     const courses = Array.from(document.querySelectorAll('input[name="taskCourse"]:checked')).map(el => el.value);
@@ -357,6 +413,7 @@ function appendLog(msg) {
 
 loadUsers();
 loadCourses();
+loadCourseFiles();
 loadCaptcha();
 </script>
 </body>

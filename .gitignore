@@ -1,10 +1,8 @@
 # Sensitive files
 .env
 accounts.json
-data/db_users_v7.json
-data/db_courses_v7.json
-data/courses_export.json
-data/courses_export.json.bak
+data/*.json
+data/*.json.bak
 data/*.log
 *.key
 
