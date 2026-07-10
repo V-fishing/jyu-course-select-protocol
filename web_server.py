@@ -182,6 +182,21 @@ def _load_default_courses() -> None:
         print(f"[警告] 加载默认课程库失败: {exc}")
 
 
+def _parse_course_submit_data(raw: str) -> str:
+    """从 cURL 命令或原始 form data 中提取课程提交数据字符串。"""
+    raw = raw.strip()
+    if raw.lower().startswith("curl"):
+        # 优先匹配 --data-raw / --data / -d 后的引号内容
+        match = re.search(r"--data(?:-raw)?\s+[\"']([^\"']+)[\"']", raw)
+        if match:
+            return match.group(1)
+        match = re.search(r"-d\s+[\"']([^\"']+)[\"']", raw)
+        if match:
+            return match.group(1)
+        raise ValueError("无法从 cURL 中提取提交数据，请直接粘贴 form data")
+    return raw
+
+
 def _import_courses_from_file(filename: str) -> dict[str, int]:
     """从 data/ 下的 JSON 文件导入课程。"""
     data_dir = Config.DATA_DIR
@@ -326,6 +341,37 @@ async def api_user_courses():
     }
 
 
+@app.post("/api/user/courses/manual")
+async def api_user_add_course_manual(payload: dict[str, Any]):
+    """用户手动添加单门课程（用于课程库未覆盖的新课程）。"""
+    session_id = payload.get("session_id", "").strip()
+    user = _user_sessions.get(session_id)
+    if not user:
+        raise HTTPException(status_code=401, detail="用户未登录或会话已过期")
+
+    name = payload.get("name", "").strip()
+    raw = payload.get("data", "").strip()
+    if not name or not raw:
+        raise HTTPException(status_code=400, detail="课程名称和提交数据不能为空")
+
+    try:
+        data_str = _parse_course_submit_data(raw)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"提交数据解析失败: {exc}")
+
+    existing_data = {info["data"] for info in _courses.values()}
+    if data_str in existing_data:
+        raise HTTPException(status_code=400, detail="该课程提交数据已存在")
+
+    uid = str(uuid.uuid4())
+    _courses[uid] = {
+        "name": name,
+        "kch_id": "",
+        "data": data_str,
+    }
+    return {"success": True, "uid": uid, "name": name, "message": "课程添加成功"}
+
+
 @app.post("/api/user/tasks")
 async def api_user_start_task(payload: dict[str, Any]):
     session_id = payload.get("session_id", "")
@@ -463,6 +509,35 @@ async def api_admin_import_courses(payload: dict[str, Any]):
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
     return {"success": True, **result}
+
+
+@app.post("/api/admin/courses/manual")
+async def api_admin_add_course_manual(payload: dict[str, Any]):
+    """手动添加单门课程：支持粘贴 cURL 命令或原始 form data。"""
+    _require_admin(payload.get("token", ""))
+    name = payload.get("name", "").strip()
+    raw = payload.get("data", "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="课程名称不能为空")
+    if not raw:
+        raise HTTPException(status_code=400, detail="课程提交数据不能为空")
+
+    try:
+        data_str = _parse_course_submit_data(raw)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"提交数据解析失败: {exc}")
+
+    existing_data = {info["data"] for info in _courses.values()}
+    if data_str in existing_data:
+        raise HTTPException(status_code=400, detail="该课程提交数据已存在")
+
+    uid = str(uuid.uuid4())
+    _courses[uid] = {
+        "name": name,
+        "kch_id": "",
+        "data": data_str,
+    }
+    return {"success": True, "uid": uid, "name": name, "message": "课程添加成功"}
 
 
 @app.get("/api/admin/course_files")
