@@ -169,7 +169,14 @@
             </div>
             <div>
                 <label>上课时间</label>
-                <input type="text" id="filterTime" placeholder="如：星期二" oninput="filterCourseList()">
+                <select id="filterTime" onchange="filterCourseList()">
+                    <option value="">全部</option>
+                    <option value="周一">周一</option>
+                    <option value="周二">周二</option>
+                    <option value="周三">周三</option>
+                    <option value="周四">周四</option>
+                    <option value="周五">周五</option>
+                </select>
             </div>
         </div>
 

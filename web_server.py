@@ -179,6 +179,21 @@ def _normalize_course_name(name: str) -> str:
     return name.strip()
 
 
+def _catalog_category(entry: dict[str, Any]) -> str:
+    """根据目录条目推断课程归属；含"超星平台"关键字的课程归为网课。"""
+    fields_to_check = [
+        entry.get("教师姓名", ""),
+        entry.get("上课地点", ""),
+        entry.get("上课时间", ""),
+        entry.get("课程名称", ""),
+        entry.get("选课备注", ""),
+        entry.get("课程简介", ""),
+    ]
+    if any("超星平台" in str(f) for f in fields_to_check):
+        return "网课"
+    return str(entry.get("课程归属", "")).strip()
+
+
 def _load_catalog(filename: str = "2026-2027-1-通识选修课.json") -> None:
     """加载课程目录 JSON（如通识选修课开课信息表），并作为课程库基础条目。"""
     global _catalog
@@ -209,7 +224,7 @@ def _load_catalog(filename: str = "2026-2027-1-通识选修课.json") -> None:
                         "location": entry.get("上课地点", ""),
                         "time": entry.get("上课时间", ""),
                         "campus": entry.get("校区名称", ""),
-                        "category": entry.get("课程归属", ""),
+                        "category": _catalog_category(entry),
                         "capacity": entry.get("选课人数", ""),
                         "weeks": entry.get("起始结束周", ""),
                         "notes": entry.get("选课备注", ""),
@@ -261,7 +276,7 @@ def _merge_catalog_meta(course: dict[str, Any]) -> dict[str, Any]:
             "location": entry.get("上课地点", ""),
             "time": entry.get("上课时间", ""),
             "campus": entry.get("校区名称", ""),
-            "category": entry.get("课程归属", ""),
+            "category": _catalog_category(entry),
             "capacity": entry.get("选课人数", ""),
             "weeks": entry.get("起始结束周", ""),
             "notes": entry.get("选课备注", ""),
