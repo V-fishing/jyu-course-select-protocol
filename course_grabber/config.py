@@ -51,6 +51,10 @@ class Config:
     # 安全
     ENCRYPT_COOKIES = os.getenv("ENCRYPT_COOKIES", "false").lower() == "true"
     COOKIE_KEY = os.getenv("COOKIE_KEY", "")
+    WEB_ADMIN_TOKEN = os.getenv("WEB_ADMIN_TOKEN", "")
+
+    # HTTPS 证书验证；默认开启，内网自签名证书可设置 VERIFY_SSL=false 关闭
+    VERIFY_SSL = os.getenv("VERIFY_SSL", "true").lower() not in ("false", "0", "no", "")
 
     # 默认请求头（基于请求的脚本应复制并填入 Cookie）
     DEFAULT_HEADERS = {

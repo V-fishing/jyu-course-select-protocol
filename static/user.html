@@ -22,6 +22,14 @@
             width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 4px;
             font-size: 14px;
         }
+        #courseSearch {
+            margin-bottom: 10px;
+        }
+        #courseSearch:focus {
+            outline: none;
+            border-color: #0066ff;
+            box-shadow: 0 0 0 2px rgba(0,102,255,0.15);
+        }
         button {
             background: #0066ff; color: #fff; border: none; cursor: pointer; margin-top: 15px;
             font-weight: 500;
@@ -100,6 +108,7 @@
             <h3>2. 选择课程</h3>
             <span id="currentUser"></span>
         </div>
+        <input type="text" id="courseSearch" placeholder="输入关键字搜索课程名称或课程 ID..." oninput="filterCourseList()">
         <div class="course-list" id="courseList">
             <div class="empty">正在加载课程列表...</div>
         </div>
@@ -107,6 +116,7 @@
             <label>
                 <input type="checkbox" id="selectAll" onchange="toggleSelectAll()"> 全选
             </label>
+            <span id="courseCount" style="float:right;color:#666;font-size:13px;"></span>
         </div>
         <div class="btn-row">
             <button class="success" onclick="startTask()" id="startBtn">开始抢课</button>
@@ -126,6 +136,7 @@ let captchaSession = null;
 let userSession = null;
 let currentTaskId = null;
 let ws = null;
+let allCourses = {};
 
 document.getElementById('username').addEventListener('keypress', e => { if (e.key === 'Enter') doLogin(); });
 document.getElementById('password').addEventListener('keypress', e => { if (e.key === 'Enter') doLogin(); });
@@ -231,21 +242,36 @@ async function doLogin() {
 async function loadCourses() {
     try {
         const courses = await api('/api/user/courses');
-        renderCourseList(courses);
+        allCourses = courses;
+        document.getElementById('courseSearch').value = '';
+        filterCourseList();
     } catch (e) {
         showStatus('taskStatus', '课程加载失败：' + e.message, 'error');
     }
 }
 
-function renderCourseList(courses) {
+function filterCourseList() {
+    const keyword = document.getElementById('courseSearch').value.trim().toLowerCase();
+    renderCourseList(allCourses, keyword);
+}
+
+function renderCourseList(courses, keyword = '') {
     const container = document.getElementById('courseList');
     container.innerHTML = '';
     const entries = Object.entries(courses);
     if (entries.length === 0) {
         container.innerHTML = '<div class="empty">暂无课程，请联系管理员导入课程数据</div>';
+        document.getElementById('courseCount').textContent = '';
         return;
     }
+
+    let visibleCount = 0;
+    const keywordLower = keyword.toLowerCase();
     for (const [uid, info] of entries) {
+        const text = `${info.name || ''} ${info.kch_id || ''}`.toLowerCase();
+        if (keyword && !text.includes(keywordLower)) {
+            continue;
+        }
         const div = document.createElement('div');
         div.className = 'course-item';
         div.innerHTML = `
@@ -253,12 +279,20 @@ function renderCourseList(courses) {
             <label for="c_${uid}">${info.name}${info.kch_id ? '（' + info.kch_id + '）' : ''}</label>
         `;
         container.appendChild(div);
+        visibleCount++;
     }
+
+    if (visibleCount === 0) {
+        container.innerHTML = '<div class="empty">无匹配课程</div>';
+    }
+    document.getElementById('courseCount').textContent = keyword
+        ? `显示 ${visibleCount} / ${entries.length} 门`
+        : `共 ${entries.length} 门`;
 }
 
 function toggleSelectAll() {
     const checked = document.getElementById('selectAll').checked;
-    document.querySelectorAll('#courseList input[type="checkbox"]').forEach(cb => cb.checked = checked);
+    document.querySelectorAll('#courseList .course-item input[type="checkbox"]').forEach(cb => cb.checked = checked);
 }
 
 async function startTask() {
@@ -266,7 +300,7 @@ async function startTask() {
         showStatus('taskStatus', '请先登录', 'error');
         return;
     }
-    const selected = Array.from(document.querySelectorAll('#courseList input[type="checkbox"]:checked')).map(el => el.value);
+    const selected = Array.from(document.querySelectorAll('#courseList .course-item input[type="checkbox"]:checked')).map(el => el.value);
     if (selected.length === 0) {
         showStatus('taskStatus', '请至少选择一门课程', 'error');
         return;

@@ -155,7 +155,7 @@ class GrabTask(threading.Thread):
                     Config.SUBMIT_URL,
                     headers=headers,
                     data=self.data_str,
-                    verify=False,
+                    verify=Config.VERIFY_SSL,
                     timeout=Config.GRAB_TIMEOUT,
                 )
                 self.request_count += 1
@@ -226,8 +226,9 @@ class GrabEngine:
         course_name: str,
         data_str: str,
         user_agent: str | None = None,
+        task_id: str | None = None,
     ) -> str:
-        task_id = f"{user_name}_{course_name}_{random.randint(1000, 9999)}"
+        task_id = task_id or f"{user_name}_{course_name}_{random.randint(1000, 9999)}"
         task = GrabTask(
             task_id=task_id,
             user_name=user_name,

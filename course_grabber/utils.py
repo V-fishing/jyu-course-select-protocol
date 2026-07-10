@@ -20,8 +20,9 @@ from course_grabber.config import Config
 if TYPE_CHECKING:
     from selenium.webdriver.remote.webdriver import WebDriver
 
-# 针对内网自签名证书，关闭 verify=False 产生的 TLS 警告
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+# 仅在显式关闭 SSL 验证时抑制自签名证书警告
+if not Config.VERIFY_SSL:
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 def setup_logging(name: str = "course_grabber") -> logging.Logger:

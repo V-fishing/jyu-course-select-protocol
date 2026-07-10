@@ -141,14 +141,23 @@ class DataManager:
         added = 0
         for uid, info in courses_dict.items():
             data = info.get("data", "")
-            if data in self._data_hash_index:
+            if not data or data in self._data_hash_index:
                 continue
+
+            # 处理 uid 冲突：若已存在且 data 不同，先移除旧索引
+            if uid in self.courses:
+                old_data = self.courses[uid].get("data")
+                if old_data and old_data in self._data_hash_index:
+                    del self._data_hash_index[old_data]
+
             self.courses[uid] = {
                 "kch_id": info.get("kch_id", ""),
                 "name": info.get("name", ""),
                 "data": data,
             }
+            self._data_hash_index[data] = uid
             added += 1
+
         if added:
             self._persist_courses()
             self._notify()

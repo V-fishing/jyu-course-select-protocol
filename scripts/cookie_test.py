@@ -34,7 +34,7 @@ def is_cookie_alive(cookie: str, user_agent: str | None = None) -> bool:
             TARGET_URL,
             headers=headers,
             allow_redirects=False,
-            verify=False,
+            verify=Config.VERIFY_SSL,
             timeout=10,
         )
         if response.status_code == 200 and "login_slogin.html" not in response.text:

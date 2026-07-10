@@ -24,7 +24,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from course_grabber.config import Config
-from course_grabber.grab_engine import GrabEngine
+from course_grabber.grab_engine import GrabEngine, StatusEvent
+from course_grabber.utils import logger
 from course_grabber.web_login import LoginError, WebLoginSession
 
 # ---------------------- 全局状态 ----------------------
@@ -44,8 +45,13 @@ _captcha_sessions: dict[str, WebLoginSession] = {}
 # 任务日志
 _tasks: dict[str, dict[str, Any]] = {}
 
+# 子任务 task_id -> 所属聚合任务 task_id（防止多用户任务覆盖全局 callback）
+_aggregate_map: dict[str, str] = {}
+_aggregate_map_lock = threading.Lock()
+
 # 口令
-_ADMIN_TOKEN = Config.COOKIE_KEY or "admin"
+_ADMIN_TOKEN = Config.WEB_ADMIN_TOKEN or Config.COOKIE_KEY or "admin"
+_WEAK_ADMIN_TOKENS = frozenset({"", "admin", "course-grabber-web"})
 
 
 def _require_admin(token: str) -> None:
@@ -106,6 +112,25 @@ def _push_log(task_id: str, user: str, course: str, status: str, message: str | 
             asyncio.run(manager.broadcast(task_id, msg))
         except Exception:
             pass
+
+
+def _route_event(event: StatusEvent) -> None:
+    """将 GrabEngine 子任务事件路由到对应的聚合任务日志。"""
+    with _aggregate_map_lock:
+        aggregate_task_id = _aggregate_map.get(event.task_id)
+    if not aggregate_task_id:
+        return
+    _push_log(
+        aggregate_task_id,
+        event.user_name,
+        event.course_name,
+        event.status,
+        event.message,
+        event.finished,
+    )
+    if event.finished:
+        with _aggregate_map_lock:
+            _aggregate_map.pop(event.task_id, None)
 
 
 # ---------------------- 课程加载 ----------------------
@@ -313,33 +338,36 @@ async def api_user_start_task(payload: dict[str, Any]):
         raise HTTPException(status_code=400, detail="至少选择一门课程")
 
     engine = _get_engine()
-    task_id = f"user_{user['username']}_{int(time.time())}"
-    _tasks[task_id] = {"logs": [], "running": True, "created_at": time.time()}
-    engine.status_callback = lambda e: _push_log(
-        task_id, e.user_name, e.course_name, e.status, e.message, e.finished
-    )
+    aggregate_task_id = f"user_{user['username']}_{int(time.time())}"
+    _tasks[aggregate_task_id] = {"logs": [], "running": True, "created_at": time.time()}
+    # 全局路由回调只需设置一次；后续任务复用同一逻辑
+    engine.status_callback = _route_event
 
-    _push_log(task_id, user["username"], "-", "开始抢课", f"共选择 {len(course_uids)} 门课程")
+    _push_log(aggregate_task_id, user["username"], "-", "开始抢课", f"共选择 {len(course_uids)} 门课程")
 
     launched = 0
     for uid in course_uids:
         course = _courses.get(uid)
         if not course:
-            _push_log(task_id, user["username"], "-", "课程不存在", f"uid={uid}")
+            _push_log(aggregate_task_id, user["username"], "-", "课程不存在", f"uid={uid}")
             continue
+        sub_task_id = f"{aggregate_task_id}__{uid}"
+        with _aggregate_map_lock:
+            _aggregate_map[sub_task_id] = aggregate_task_id
         engine.launch(
             user_name=user["username"],
             cookie=user["cookie"],
             course_name=course["name"],
             data_str=course["data"],
             user_agent=user.get("user_agent"),
+            task_id=sub_task_id,
         )
         launched += 1
 
     if launched == 0:
-        _push_log(task_id, user["username"], "-", "没有可抢的课程", finished=True)
+        _push_log(aggregate_task_id, user["username"], "-", "没有可抢的课程", finished=True)
 
-    return {"success": True, "task_id": task_id, "launched": launched}
+    return {"success": True, "task_id": aggregate_task_id, "launched": launched}
 
 
 @app.post("/api/user/tasks/{task_id}/stop")
@@ -455,24 +483,50 @@ async def api_admin_course_files(token: str = Query(...)):
 
 @app.post("/api/admin/courses/scrape")
 async def api_admin_scrape_courses(payload: dict[str, Any]):
-    """使用管理员账号通过 Selenium 爬取课程（后台运行）。"""
+    """使用管理员 Cookie 直接请求教务系统查询接口爬取课程（后台运行）。"""
     _require_admin(payload.get("token", ""))
 
+    if not _admin_session:
+        raise HTTPException(status_code=401, detail="管理员未登录")
+
     def _scrape():
+        courses: dict[str, Any] | None = None
+        error_msg = ""
+
+        # 优先尝试直接走 HTTP 协议拉取
+        try:
+            from scripts.get_course_json import fetch_courses_via_api, save_courses_json
+            courses = fetch_courses_via_api(
+                cookie_str=_admin_session["cookie"],
+                user_agent=_admin_session.get("user_agent"),
+            )
+            if courses:
+                save_courses_json(courses)
+                _load_default_courses()
+                print(f"[爬取课程成功] API 模式，共 {len(courses)} 门")
+                return
+            error_msg = "API 模式未返回课程"
+        except Exception as exc:
+            logger.warning("API 模式爬取失败: %s", exc)
+            error_msg = str(exc)
+
+        # API 失败时，若 .env 中配置了账号密码，回退到 Selenium
         try:
             from scripts.get_course_json import generate_courses_json
-            # 临时覆盖配置中的单用户账号为管理员账号
             original_user = Config.SINGLE_USERNAME
             original_pwd = Config.SINGLE_PASSWORD
-            if _admin_session:
-                Config.SINGLE_USERNAME = _admin_session["username"]
-                Config.SINGLE_PASSWORD = ""
-            generate_courses_json()
-            Config.SINGLE_USERNAME = original_user
-            Config.SINGLE_PASSWORD = original_pwd
-            _load_default_courses()
+            if Config.SINGLE_USERNAME and Config.SINGLE_PASSWORD:
+                generate_courses_json()
+                Config.SINGLE_USERNAME = original_user
+                Config.SINGLE_PASSWORD = original_pwd
+                _load_default_courses()
+                print("[爬取课程成功] Selenium 模式")
+                return
         except Exception as exc:
-            print(f"[爬取课程失败] {exc}")
+            logger.error("Selenium 模式爬取也失败: %s", exc)
+            error_msg = f"{error_msg}; Selenium: {exc}"
+
+        print(f"[爬取课程失败] {error_msg}")
 
     thread = threading.Thread(target=_scrape, daemon=True)
     thread.start()
@@ -482,5 +536,33 @@ async def api_admin_scrape_courses(payload: dict[str, Any]):
 # ---------------------- 运行入口 ----------------------
 
 if __name__ == "__main__":
+    import argparse
+
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+    parser = argparse.ArgumentParser(description="抢课 Web 服务 standalone 入口")
+    parser.add_argument("--host", default="127.0.0.1", help="绑定地址（默认 127.0.0.1）")
+    parser.add_argument("--port", type=int, default=8000, help="本地端口")
+    parser.add_argument(
+        "--force-expose",
+        action="store_true",
+        help="强制允许弱口令绑定公网地址（不安全，仅测试环境）",
+    )
+    args = parser.parse_args()
+
+    if (
+        args.host not in ("127.0.0.1", "localhost", "::1")
+        and _ADMIN_TOKEN in _WEAK_ADMIN_TOKENS
+        and not args.force_expose
+    ):
+        raise SystemExit(
+            "[安全错误] 管理口令为弱默认口令，禁止绑定公网地址。\n"
+            "请执行以下任一操作：\n"
+            "  1) 设置强 WEB_ADMIN_TOKEN 环境变量（推荐）\n"
+            "  2) 使用 --host 127.0.0.1 仅本地访问\n"
+            "  3) 使用 --force-expose 强制暴露（仅测试环境）"
+        )
+    if _ADMIN_TOKEN in _WEAK_ADMIN_TOKENS:
+        print(f"[安全警告] 当前管理口令为弱默认口令 {_ADMIN_TOKEN!r}，建议设置 WEB_ADMIN_TOKEN")
+
+    uvicorn.run(app, host=args.host, port=args.port)
