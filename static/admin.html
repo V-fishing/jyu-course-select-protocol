@@ -120,6 +120,18 @@
                         <button class="success" onclick="importCourses()">导入课程</button>
                     </div>
                     <div class="status" id="importStatus"></div>
+
+                    <hr style="border:none; border-top:1px solid #eee; margin:20px 0;">
+
+                    <h4 style="margin-top:0;">导入课程目录</h4>
+                    <p style="font-size:13px;color:#666;margin:0 0 10px;">
+                        导入开课信息一览表（如通识选修课目录），用于在用户端显示教师、地点、时间等筛选信息。
+                    </p>
+                    <select id="catalogFileSelect">
+                        <option value="">请先加载文件列表</option>
+                    </select>
+                    <button class="success" onclick="importCatalog()">导入目录</button>
+                    <div class="status" id="catalogStatus"></div>
                 </div>
                 <div>
                     <h4 style="margin-top:0;">在线爬取课程</h4>
@@ -295,10 +307,15 @@ function renderCourseList(courses) {
         return;
     }
     for (const [uid, info] of entries) {
+        const meta = info.meta || {};
+        const metaText = [
+            meta.campus, meta.college, meta.teacher, meta.credits ? meta.credits + '学分' : '',
+            meta.category, meta.time, meta.location
+        ].filter(Boolean).join(' | ');
         const div = document.createElement('div');
         div.className = 'course-item';
         div.innerHTML = `
-            <span>${info.name}</small>${info.kch_id || uid}</small></span>
+            <span>${info.name}<br><small>${info.kch_id || uid}${metaText ? ' | ' + metaText : ''}</small></span>
         `;
         container.appendChild(div);
     }
@@ -308,22 +325,56 @@ async function loadCourseFiles() {
     if (!adminLoggedIn) return;
     try {
         const res = await api('/api/admin/course_files');
-        const select = document.getElementById('courseFileSelect');
-        select.innerHTML = '';
-        if (!res.files || res.files.length === 0) {
-            select.innerHTML = '<option value="">data/ 目录下暂无课程 JSON 文件</option>';
-            showStatus('importStatus', '请先把课程 JSON 文件放到 data/ 目录', 'info');
+        const files = res.files || [];
+
+        const courseSelect = document.getElementById('courseFileSelect');
+        courseSelect.innerHTML = '';
+        const catalogSelect = document.getElementById('catalogFileSelect');
+        catalogSelect.innerHTML = '';
+
+        if (files.length === 0) {
+            courseSelect.innerHTML = '<option value="">data/ 目录下暂无 JSON 文件</option>';
+            catalogSelect.innerHTML = '<option value="">data/ 目录下暂无 JSON 文件</option>';
+            showStatus('importStatus', '请先把 JSON 文件放到 data/ 目录', 'info');
             return;
         }
-        for (const f of res.files) {
-            const opt = document.createElement('option');
-            opt.value = f.name;
-            opt.textContent = `${f.name}（${f.count} 门课程）`;
-            select.appendChild(opt);
-        }
-        showStatus('importStatus', `找到 ${res.files.length} 个课程文件`, 'ok');
+
+        files.forEach(f => {
+            const opt1 = document.createElement('option');
+            opt1.value = f.name;
+            opt1.textContent = `${f.name}（${f.count} 条）`;
+            courseSelect.appendChild(opt1);
+
+            const opt2 = document.createElement('option');
+            opt2.value = f.name;
+            opt2.textContent = `${f.name}（${f.count} 条）`;
+            catalogSelect.appendChild(opt2);
+        });
+
+        showStatus('importStatus', `找到 ${files.length} 个文件`, 'ok');
     } catch (e) {
         showStatus('importStatus', '加载文件列表失败：' + e.message, 'error');
+    }
+}
+
+async function importCatalog() {
+    const filename = document.getElementById('catalogFileSelect').value;
+    if (!filename) {
+        showStatus('catalogStatus', '请先选择目录文件', 'error');
+        return;
+    }
+    try {
+        const res = await api('/api/admin/catalog/import', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({token, filename})
+        });
+        showStatus('catalogStatus', res.message, 'ok');
+        appendLog(`导入课程目录：${res.count} 条`, 'success');
+        loadCourses();
+    } catch (e) {
+        showStatus('catalogStatus', '导入失败：' + e.message, 'error');
+        appendLog('导入课程目录失败：' + e.message, 'error');
     }
 }
 

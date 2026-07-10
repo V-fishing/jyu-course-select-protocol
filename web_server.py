@@ -33,6 +33,9 @@ from course_grabber.web_login import LoginError, WebLoginSession
 # 课程库：启动时从 db_courses_v7.json 加载，管理端也可更新
 _courses: dict[str, dict[str, Any]] = {}
 
+# 课程目录：从通识选修课等目录 JSON 加载，用于展示友好信息和筛选
+_catalog: dict[str, dict[str, Any]] = {}
+
 # 用户会话：用户登录后只保存在内存，服务重启失效
 _user_sessions: dict[str, dict[str, Any]] = {}
 
@@ -161,8 +164,91 @@ def _extract_course_name(item: dict[str, Any]) -> str:
     return name or "未命名课程"
 
 
+def _normalize_course_name(name: str) -> str:
+    """去除课程名中的班号、学分等后缀，用于目录匹配。"""
+    name = str(name).strip()
+    if not name:
+        return ""
+    # 去除尾部班号，如 "-02"、"-2"
+    name = re.sub(r"-\d{1,2}$", "", name)
+    # 去除学分后缀
+    name = re.sub(r"\s*[-+]?\d+\.0\s*学分\s*$", "", name)
+    return name.strip()
+
+
+def _load_catalog(filename: str = "2026-2027-1-通识选修课.json") -> None:
+    """加载课程目录 JSON（如通识选修课开课信息表）。"""
+    global _catalog
+    target = Config.DATA_DIR / filename
+    if not target.exists():
+        return
+    try:
+        raw = json.loads(target.read_text(encoding="utf-8"))
+        if not isinstance(raw, list):
+            return
+        _catalog.clear()
+        for idx, entry in enumerate(raw):
+            if not isinstance(entry, dict):
+                continue
+            key = str(entry.get("课程名称", f"__{idx}")).strip()
+            if key:
+                _catalog[key] = entry
+        print(f"[课程目录] 已加载 {_catalog.__len__()} 条目录记录")
+    except Exception as exc:
+        print(f"[警告] 加载课程目录失败: {exc}")
+
+
+def _match_catalog(name: str) -> dict[str, Any] | None:
+    """根据课程名称匹配目录条目，返回最匹配的元数据。"""
+    if not _catalog:
+        return None
+    base = _normalize_course_name(name)
+    if not base:
+        return None
+
+    # 优先：规范化后完全相等
+    for entry in _catalog.values():
+        catalog_base = _normalize_course_name(entry.get("课程名称", ""))
+        if catalog_base and catalog_base == base:
+            return entry
+
+    # 次优：互相包含
+    for entry in _catalog.values():
+        catalog_name = str(entry.get("课程名称", "")).strip()
+        if catalog_name and (base in catalog_name or catalog_name in base):
+            return entry
+
+    return None
+
+
+def _merge_catalog_meta(course: dict[str, Any]) -> dict[str, Any]:
+    """将目录元数据合并到课程记录中。"""
+    if not _catalog:
+        return course
+    name = course.get("name", "")
+    entry = _match_catalog(name)
+    if not entry:
+        return course
+
+    meta = {
+        "college": entry.get("开课学院", ""),
+        "teacher": entry.get("教师姓名", ""),
+        "credits": entry.get("学分", ""),
+        "location": entry.get("上课地点", ""),
+        "time": entry.get("上课时间", ""),
+        "campus": entry.get("校区名称", ""),
+        "category": entry.get("课程归属", ""),
+        "capacity": entry.get("选课人数", ""),
+        "weeks": entry.get("起始结束周", ""),
+        "notes": entry.get("选课备注", ""),
+    }
+    course = dict(course)
+    course["meta"] = meta
+    return course
+
+
 def _load_default_courses() -> None:
-    """启动时默认加载 db_courses_v7.json。"""
+    """启动时默认加载 db_courses_v7.json，并合并课程目录元数据。"""
     default_file = Config.DATA_DIR / "db_courses_v7.json"
     if not default_file.exists():
         return
@@ -173,11 +259,12 @@ def _load_default_courses() -> None:
         _courses.clear()
         for uid, item in raw.items():
             if isinstance(item, dict) and item.get("data"):
-                _courses[uid] = {
+                course = {
                     "name": _extract_course_name(item),
                     "kch_id": str(item.get("kch_id", "")).strip(),
                     "data": item["data"],
                 }
+                _courses[uid] = _merge_catalog_meta(course)
     except Exception as exc:
         print(f"[警告] 加载默认课程库失败: {exc}")
 
@@ -219,11 +306,12 @@ def _import_courses_from_file(filename: str) -> dict[str, int]:
         if not data or data in existing_data:
             skipped += 1
             continue
-        _courses[uid] = {
+        course = {
             "name": _extract_course_name(item),
             "kch_id": str(item.get("kch_id", "")).strip(),
             "data": data,
         }
+        _courses[uid] = _merge_catalog_meta(course)
         existing_data.add(data)
         imported += 1
 
@@ -247,6 +335,7 @@ def _get_engine() -> GrabEngine:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _load_catalog()
     _load_default_courses()
     print(f"[课程库] 已加载 {_courses.__len__()} 门课程")
     _get_engine()
@@ -336,7 +425,11 @@ async def api_user_login(payload: dict[str, Any]):
 @app.get("/api/user/courses")
 async def api_user_courses():
     return {
-        uid: {"name": info["name"], "kch_id": info["kch_id"]}
+        uid: {
+            "name": info["name"],
+            "kch_id": info["kch_id"],
+            "meta": info.get("meta", {}),
+        }
         for uid, info in _courses.items()
     }
 
@@ -364,11 +457,12 @@ async def api_user_add_course_manual(payload: dict[str, Any]):
         raise HTTPException(status_code=400, detail="该课程提交数据已存在")
 
     uid = str(uuid.uuid4())
-    _courses[uid] = {
+    course = {
         "name": name,
         "kch_id": "",
         "data": data_str,
     }
+    _courses[uid] = _merge_catalog_meta(course)
     return {"success": True, "uid": uid, "name": name, "message": "课程添加成功"}
 
 
@@ -532,11 +626,12 @@ async def api_admin_add_course_manual(payload: dict[str, Any]):
         raise HTTPException(status_code=400, detail="该课程提交数据已存在")
 
     uid = str(uuid.uuid4())
-    _courses[uid] = {
+    course = {
         "name": name,
         "kch_id": "",
         "data": data_str,
     }
+    _courses[uid] = _merge_catalog_meta(course)
     return {"success": True, "uid": uid, "name": name, "message": "课程添加成功"}
 
 
@@ -549,14 +644,36 @@ async def api_admin_course_files(token: str = Query(...)):
             continue
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            count = len(data) if isinstance(data, dict) else 0
+            if isinstance(data, dict):
+                count = len(data)
+            elif isinstance(data, list):
+                count = len(data)
+            else:
+                count = 0
             files.append({"name": path.name, "count": count})
         except Exception:
             pass
     return {"files": files}
 
 
-@app.post("/api/admin/courses/scrape")
+@app.post("/api/admin/catalog/import")
+async def api_admin_import_catalog(payload: dict[str, Any]):
+    """导入课程目录 JSON（如通识选修课开课信息表），用于 enriched 展示和筛选。"""
+    _require_admin(payload.get("token", ""))
+    filename = payload.get("filename", "").strip()
+    if not filename:
+        raise HTTPException(status_code=400, detail="请选择目录文件")
+    try:
+        _load_catalog(filename)
+        # 重新加载课程库以合并新目录
+        _load_default_courses()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return {
+        "success": True,
+        "count": len(_catalog),
+        "message": f"已导入目录 {_catalog.__len__()} 条，课程库已重新合并",
+    }
 async def api_admin_scrape_courses(payload: dict[str, Any]):
     """使用管理员 Cookie 直接请求教务系统查询接口爬取课程（后台运行）。"""
     _require_admin(payload.get("token", ""))

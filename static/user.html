@@ -30,6 +30,32 @@
             border-color: #0066ff;
             box-shadow: 0 0 0 2px rgba(0,102,255,0.15);
         }
+        .filters {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+        .filters label {
+            margin: 0 0 4px;
+            font-size: 12px;
+            color: #666;
+        }
+        .filters select, .filters input {
+            margin-top: 0;
+            padding: 6px 8px;
+        }
+        .filter-actions {
+            display: flex; gap: 10px; margin-bottom: 12px;
+        }
+        .filter-actions button {
+            width: auto; margin-top: 0; padding: 6px 12px; font-size: 13px;
+        }
+        .course-item .meta {
+            font-size: 12px;
+            color: #666;
+            margin-top: 2px;
+        }
         button {
             background: #0066ff; color: #fff; border: none; cursor: pointer; margin-top: 15px;
             font-weight: 500;
@@ -108,6 +134,38 @@
             <h3>2. 选择课程</h3>
             <span id="currentUser"></span>
         </div>
+
+        <div class="filters">
+            <div>
+                <label>校区</label>
+                <select id="filterCampus" onchange="filterCourseList()"><option value="">全部</option></select>
+            </div>
+            <div>
+                <label>开课学院</label>
+                <select id="filterCollege" onchange="filterCourseList()"><option value="">全部</option></select>
+            </div>
+            <div>
+                <label>教师</label>
+                <select id="filterTeacher" onchange="filterCourseList()"><option value="">全部</option></select>
+            </div>
+            <div>
+                <label>学分</label>
+                <select id="filterCredits" onchange="filterCourseList()"><option value="">全部</option></select>
+            </div>
+            <div>
+                <label>课程归属</label>
+                <select id="filterCategory" onchange="filterCourseList()"><option value="">全部</option></select>
+            </div>
+            <div>
+                <label>上课时间</label>
+                <input type="text" id="filterTime" placeholder="如：星期二" oninput="filterCourseList()">
+            </div>
+        </div>
+
+        <div class="filter-actions">
+            <button class="secondary" onclick="resetFilterInputs(); filterCourseList();">重置筛选</button>
+        </div>
+
         <input type="text" id="courseSearch" placeholder="输入关键字搜索课程名称或课程 ID..." oninput="filterCourseList()">
         <div class="course-list" id="courseList">
             <div class="empty">正在加载课程列表...</div>
@@ -252,19 +310,91 @@ async function loadCourses() {
     try {
         const courses = await api('/api/user/courses');
         allCourses = courses;
+        populateFilters(courses);
         document.getElementById('courseSearch').value = '';
+        resetFilterInputs();
         filterCourseList();
     } catch (e) {
         showStatus('taskStatus', '课程加载失败：' + e.message, 'error');
     }
 }
 
-function filterCourseList() {
-    const keyword = document.getElementById('courseSearch').value.trim().toLowerCase();
-    renderCourseList(allCourses, keyword);
+function populateFilters(courses) {
+    const sets = {
+        campus: new Set(),
+        college: new Set(),
+        teacher: new Set(),
+        credits: new Set(),
+        category: new Set(),
+    };
+    for (const info of Object.values(courses)) {
+        const meta = info.meta || {};
+        if (meta.campus) sets.campus.add(meta.campus);
+        if (meta.college) sets.college.add(meta.college);
+        if (meta.teacher) sets.teacher.add(meta.teacher);
+        if (meta.credits) sets.credits.add(meta.credits);
+        if (meta.category) sets.category.add(meta.category);
+    }
+    fillSelect('filterCampus', sets.campus);
+    fillSelect('filterCollege', sets.college);
+    fillSelect('filterTeacher', sets.teacher);
+    fillSelect('filterCredits', sets.credits);
+    fillSelect('filterCategory', sets.category);
 }
 
-function renderCourseList(courses, keyword = '') {
+function fillSelect(id, values) {
+    const select = document.getElementById(id);
+    const current = select.value;
+    select.innerHTML = '<option value="">全部</option>';
+    Array.from(values).sort().forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v;
+        opt.textContent = v;
+        select.appendChild(opt);
+    });
+    select.value = current;
+}
+
+function resetFilterInputs() {
+    ['filterCampus', 'filterCollege', 'filterTeacher', 'filterCredits', 'filterCategory'].forEach(id => {
+        document.getElementById(id).value = '';
+    });
+    document.getElementById('filterTime').value = '';
+}
+
+function getFilterValues() {
+    return {
+        campus: document.getElementById('filterCampus').value,
+        college: document.getElementById('filterCollege').value,
+        teacher: document.getElementById('filterTeacher').value,
+        credits: document.getElementById('filterCredits').value,
+        category: document.getElementById('filterCategory').value,
+        time: document.getElementById('filterTime').value.trim().toLowerCase(),
+        keyword: document.getElementById('courseSearch').value.trim().toLowerCase(),
+    };
+}
+
+function courseMatchesFilters(info, filters) {
+    const meta = info.meta || {};
+    if (filters.campus && meta.campus !== filters.campus) return false;
+    if (filters.college && meta.college !== filters.college) return false;
+    if (filters.teacher && meta.teacher !== filters.teacher) return false;
+    if (filters.credits && String(meta.credits) !== filters.credits) return false;
+    if (filters.category && meta.category !== filters.category) return false;
+    if (filters.time && !(meta.time || '').toLowerCase().includes(filters.time)) return false;
+    if (filters.keyword) {
+        const text = `${info.name || ''} ${info.kch_id || ''} ${meta.teacher || ''} ${meta.location || ''}`.toLowerCase();
+        if (!text.includes(filters.keyword)) return false;
+    }
+    return true;
+}
+
+function filterCourseList() {
+    const filters = getFilterValues();
+    renderCourseList(allCourses, filters);
+}
+
+function renderCourseList(courses, filters = {}) {
     const container = document.getElementById('courseList');
     container.innerHTML = '';
     const entries = Object.entries(courses);
@@ -275,17 +405,23 @@ function renderCourseList(courses, keyword = '') {
     }
 
     let visibleCount = 0;
-    const keywordLower = keyword.toLowerCase();
     for (const [uid, info] of entries) {
-        const text = `${info.name || ''} ${info.kch_id || ''}`.toLowerCase();
-        if (keyword && !text.includes(keywordLower)) {
+        if (!courseMatchesFilters(info, filters)) {
             continue;
         }
+        const meta = info.meta || {};
+        const metaText = [
+            meta.campus, meta.college, meta.teacher, meta.credits ? meta.credits + '学分' : '',
+            meta.category, meta.time, meta.location
+        ].filter(Boolean).join(' | ');
         const div = document.createElement('div');
         div.className = 'course-item';
         div.innerHTML = `
             <input type="checkbox" id="c_${uid}" value="${uid}">
-            <label for="c_${uid}">${info.name}${info.kch_id ? '（' + info.kch_id + '）' : ''}</label>
+            <label for="c_${uid}">
+                ${info.name}${info.kch_id ? '（' + info.kch_id + '）' : ''}
+                ${metaText ? '<div class="meta">' + metaText + '</div>' : ''}
+            </label>
         `;
         container.appendChild(div);
         visibleCount++;
@@ -294,9 +430,11 @@ function renderCourseList(courses, keyword = '') {
     if (visibleCount === 0) {
         container.innerHTML = '<div class="empty">无匹配课程</div>';
     }
-    document.getElementById('courseCount').textContent = keyword
-        ? `显示 ${visibleCount} / ${entries.length} 门`
-        : `共 ${entries.length} 门`;
+    const total = entries.length;
+    const activeFilters = Object.values(filters).some(v => v);
+    document.getElementById('courseCount').textContent = activeFilters
+        ? `显示 ${visibleCount} / ${total} 门`
+        : `共 ${total} 门`;
 }
 
 function toggleSelectAll() {
