@@ -56,6 +56,17 @@
             color: #666;
             margin-top: 2px;
         }
+        .course-item.no-data {
+            opacity: 0.7;
+            background: #f9f9f9;
+        }
+        .course-item.no-data input[type="checkbox"] {
+            cursor: not-allowed;
+        }
+        .course-item.no-data label {
+            cursor: default;
+            color: #888;
+        }
         button {
             background: #0066ff; color: #fff; border: none; cursor: pointer; margin-top: 15px;
             font-weight: 500;
@@ -414,12 +425,15 @@ function renderCourseList(courses, filters = {}) {
             meta.campus, meta.college, meta.teacher, meta.credits ? meta.credits + '学分' : '',
             meta.category, meta.time, meta.location
         ].filter(Boolean).join(' | ');
+        const hasData = info.has_data;
+        const disabledAttr = hasData ? '' : 'disabled';
+        const badge = hasData ? '' : '<span style="color:#999;font-size:12px;margin-left:8px;">[待爬取]</span>';
         const div = document.createElement('div');
-        div.className = 'course-item';
+        div.className = 'course-item' + (hasData ? '' : ' no-data');
         div.innerHTML = `
-            <input type="checkbox" id="c_${uid}" value="${uid}">
+            <input type="checkbox" id="c_${uid}" value="${uid}" ${disabledAttr}>
             <label for="c_${uid}">
-                ${info.name}${info.kch_id ? '（' + info.kch_id + '）' : ''}
+                ${info.name}${info.kch_id ? '（' + info.kch_id + '）' : ''}${badge}
                 ${metaText ? '<div class="meta">' + metaText + '</div>' : ''}
             </label>
         `;
@@ -439,7 +453,7 @@ function renderCourseList(courses, filters = {}) {
 
 function toggleSelectAll() {
     const checked = document.getElementById('selectAll').checked;
-    document.querySelectorAll('#courseList .course-item input[type="checkbox"]').forEach(cb => cb.checked = checked);
+    document.querySelectorAll('#courseList .course-item input[type="checkbox"]:not(:disabled)').forEach(cb => cb.checked = checked);
 }
 
 async function addCourseManual() {
@@ -474,9 +488,11 @@ async function startTask() {
         showStatus('taskStatus', '请先登录', 'error');
         return;
     }
-    const selected = Array.from(document.querySelectorAll('#courseList .course-item input[type="checkbox"]:checked')).map(el => el.value);
+    const selected = Array.from(document.querySelectorAll('#courseList .course-item input[type="checkbox"]:checked'))
+        .map(el => el.value)
+        .filter(uid => allCourses[uid] && allCourses[uid].has_data);
     if (selected.length === 0) {
-        showStatus('taskStatus', '请至少选择一门课程', 'error');
+        showStatus('taskStatus', '请至少选择一门可抢课程（带数据的课程）', 'error');
         return;
     }
     const btn = document.getElementById('startBtn');
