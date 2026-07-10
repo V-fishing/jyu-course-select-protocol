@@ -139,23 +139,26 @@ def _route_event(event: StatusEvent) -> None:
 # ---------------------- 课程加载 ----------------------
 
 def _extract_course_name(item: dict[str, Any]) -> str:
-    """从课程条目中提取可读名称。"""
+    """从课程条目中提取可读名称；优先使用 data 中 kcmc 的教务系统官方名称。"""
+    data = str(item.get("data", "")).strip()
+    if data:
+        match = re.search(r"kcmc=([^&]+)", data)
+        if match:
+            try:
+                decoded = urllib.parse.unquote(match.group(1)).replace("+", " ")
+                # kcmc 格式如 "(13102702)中国共产党简史 - 2.0 学分"
+                decoded = re.sub(r"^\([^)]+\)\s*", "", decoded)
+                decoded = re.sub(r"\s*[-+]?\d+\.0\s*学分\s*$", "", decoded)
+                decoded = re.sub(r"\s*-\s*$", "", decoded)
+                decoded = decoded.strip()
+                if decoded:
+                    return decoded
+            except Exception:
+                pass
+
     name = str(item.get("name", "")).strip()
     if name and not name.lower().startswith("course_") and not name.lower().startswith("undefined"):
         return name
-
-    data = item.get("data", "")
-    match = re.search(r"kcmc=([^&]+)", data)
-    if match:
-        try:
-            decoded = urllib.parse.unquote(match.group(1)).replace("+", " ")
-            decoded = re.sub(r"^\(\d+\)\s*", "", decoded)
-            decoded = re.sub(r"\s*[-+]?\d+\.0\s*学分\s*$", "", decoded)
-            decoded = decoded.strip()
-            if decoded:
-                return decoded
-        except Exception:
-            pass
 
     kch_id = str(item.get("kch_id", "")).strip()
     if kch_id and kch_id not in ("undefined", "leftpage", "rightpage"):
@@ -165,14 +168,14 @@ def _extract_course_name(item: dict[str, Any]) -> str:
 
 
 def _normalize_course_name(name: str) -> str:
-    """去除课程名中的班号、学分等后缀，用于目录匹配。"""
+    """去除课程名中的班号、周次、学分等后缀，用于目录匹配。"""
     name = str(name).strip()
     if not name:
         return ""
-    # 去除尾部班号，如 "-02"、"-2"
-    name = re.sub(r"-\d{1,2}$", "", name)
     # 去除学分后缀
     name = re.sub(r"\s*[-+]?\d+\.0\s*学分\s*$", "", name)
+    # 去除尾部班号及附加后缀，如 "-02"、"-02-(1~8周)"、"-02-人文社会科学"
+    name = re.sub(r"-\d{1,2}(?:-.+)?$", "", name)
     return name.strip()
 
 
@@ -268,8 +271,11 @@ def _merge_catalog_meta(course: dict[str, Any]) -> dict[str, Any]:
     return course
 
 
-def _upsert_course(uid: str, course: dict[str, Any]) -> None:
-    """添加或更新课程；如果课程名已存在且新记录有 data，则合并到现有记录。"""
+def _upsert_course(uid: str, course: dict[str, Any], *, allow_new: bool = True) -> bool:
+    """添加或更新课程；如果课程名已存在且新记录有 data，则合并到现有记录。
+
+    返回 True 表示成功写入/更新，False 表示因 allow_new=False 且未匹配到现有条目而跳过。
+    """
     course = _merge_catalog_meta(course)
     course_name = _normalize_course_name(course.get("name", ""))
     # 按规范化名称查找是否已有同课程
@@ -284,12 +290,15 @@ def _upsert_course(uid: str, course: dict[str, Any]) -> None:
                 })
                 if "meta" in course:
                     existing["meta"] = course["meta"]
-                return
+                return True
+    if not allow_new:
+        return False
     _courses[uid] = course
+    return True
 
 
 def _load_default_courses() -> None:
-    """启动时默认加载 db_courses_v7.json，并合并/更新到现有课程库（含目录条目）。"""
+    """启动时默认加载 db_courses_v7.json，仅用于补充/更新现有课程库（目录或手动添加的条目）。"""
     default_file = Config.DATA_DIR / "db_courses_v7.json"
     if not default_file.exists():
         return
@@ -304,7 +313,7 @@ def _load_default_courses() -> None:
                     "kch_id": str(item.get("kch_id", "")).strip(),
                     "data": item["data"],
                 }
-                _upsert_course(uid, course)
+                _upsert_course(uid, course, allow_new=False)
     except Exception as exc:
         print(f"[警告] 加载默认课程库失败: {exc}")
 
@@ -325,7 +334,7 @@ def _parse_course_submit_data(raw: str) -> str:
 
 
 def _import_courses_from_file(filename: str) -> dict[str, int]:
-    """从 data/ 下的 JSON 文件导入课程。"""
+    """从 data/ 下的 JSON 文件导入课程；仅补充/更新已有课程条目，不新增无关条目。"""
     data_dir = Config.DATA_DIR
     target = (data_dir / filename).resolve()
     if not str(target).startswith(str(data_dir.resolve())) or not target.exists():
@@ -351,9 +360,11 @@ def _import_courses_from_file(filename: str) -> dict[str, int]:
             "kch_id": str(item.get("kch_id", "")).strip(),
             "data": data,
         }
-        _upsert_course(uid, course)
-        existing_data.add(data)
-        imported += 1
+        if _upsert_course(uid, course, allow_new=False):
+            existing_data.add(data)
+            imported += 1
+        else:
+            skipped += 1
 
     return {"imported": imported, "skipped": skipped, "total": len(raw)}
 
@@ -376,7 +387,6 @@ def _get_engine() -> GrabEngine:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _load_catalog()
-    _load_default_courses()
     print(f"[课程库] 已加载 {_courses.__len__()} 门课程")
     _get_engine()
     yield

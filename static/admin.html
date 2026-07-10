@@ -391,8 +391,8 @@ async function importCourses() {
             body: JSON.stringify({token, filename})
         });
         showStatus('importStatus',
-            `导入完成：新增 ${res.imported} 门，跳过重复 ${res.skipped} 门，文件共 ${res.total} 门`, 'ok');
-        appendLog(`导入课程：新增 ${res.imported} 门，跳过 ${res.skipped} 门`, 'success');
+            `导入完成：补充 ${res.imported} 门，跳过 ${res.skipped} 门，文件共 ${res.total} 门`, 'ok');
+        appendLog(`导入课程：补充 ${res.imported} 门，跳过 ${res.skipped} 门`, 'success');
         loadCourses();
     } catch (e) {
         showStatus('importStatus', '导入失败：' + e.message, 'error');
