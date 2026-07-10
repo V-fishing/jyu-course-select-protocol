@@ -188,15 +188,10 @@
             <span id="courseCount" style="float:right;color:#666;font-size:13px;"></span>
         </div>
 
-        <div style="margin-top:15px; padding:15px; background:#f8f9fa; border-radius:6px;">
-            <div style="font-size:13px; color:#666; margin-bottom:8px;">找不到课程？可以手动添加：</div>
-            <input type="text" id="manualCourseName" placeholder="课程名称" style="margin-bottom:8px;">
-            <textarea id="manualCourseData" rows="2" placeholder="粘贴选课请求的 cURL 或 form data"></textarea>
-            <button class="secondary" onclick="addCourseManual()" style="margin-top:8px;">添加到课程列表</button>
-            <div class="status" id="manualAddStatus" style="margin-top:8px;"></div>
+        <div class="btn-row" style="margin-top:15px;">
+            <button class="success" onclick="startTask()" id="startBtn">开始抢课</button>
+            <button class="danger" onclick="stopTask()" id="stopBtn" disabled>停止抢课</button>
         </div>
-
-        <div class="btn-row">
             <button class="success" onclick="startTask()" id="startBtn">开始抢课</button>
             <button class="danger" onclick="stopTask()" id="stopBtn" disabled>停止抢课</button>
         </div>
@@ -454,33 +449,6 @@ function renderCourseList(courses, filters = {}) {
 function toggleSelectAll() {
     const checked = document.getElementById('selectAll').checked;
     document.querySelectorAll('#courseList .course-item input[type="checkbox"]:not(:disabled)').forEach(cb => cb.checked = checked);
-}
-
-async function addCourseManual() {
-    if (!userSession) {
-        showStatus('manualAddStatus', '请先登录', 'error');
-        return;
-    }
-    const name = document.getElementById('manualCourseName').value.trim();
-    const data = document.getElementById('manualCourseData').value.trim();
-    if (!name || !data) {
-        showStatus('manualAddStatus', '课程名称和提交数据不能为空', 'error');
-        return;
-    }
-    try {
-        const res = await api('/api/user/courses/manual', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({session_id: userSession, name, data})
-        });
-        showStatus('manualAddStatus', `已添加：${res.name}`, 'ok');
-        appendLog(`手动添加课程：${res.name}`, 'success');
-        document.getElementById('manualCourseName').value = '';
-        document.getElementById('manualCourseData').value = '';
-        loadCourses();
-    } catch (e) {
-        showStatus('manualAddStatus', '添加失败：' + e.message, 'error');
-    }
 }
 
 async function startTask() {

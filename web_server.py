@@ -485,38 +485,6 @@ async def api_user_courses():
     }
 
 
-@app.post("/api/user/courses/manual")
-async def api_user_add_course_manual(payload: dict[str, Any]):
-    """用户手动添加单门课程（用于课程库未覆盖的新课程）。"""
-    session_id = payload.get("session_id", "").strip()
-    user = _user_sessions.get(session_id)
-    if not user:
-        raise HTTPException(status_code=401, detail="用户未登录或会话已过期")
-
-    name = payload.get("name", "").strip()
-    raw = payload.get("data", "").strip()
-    if not name or not raw:
-        raise HTTPException(status_code=400, detail="课程名称和提交数据不能为空")
-
-    try:
-        data_str = _parse_course_submit_data(raw)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"提交数据解析失败: {exc}")
-
-    existing_data = {info["data"] for info in _courses.values()}
-    if data_str in existing_data:
-        raise HTTPException(status_code=400, detail="该课程提交数据已存在")
-
-    uid = str(uuid.uuid4())
-    course = {
-        "name": name,
-        "kch_id": "",
-        "data": data_str,
-    }
-    _upsert_course(uid, course)
-    return {"success": True, "uid": uid, "name": name, "message": "课程添加成功"}
-
-
 @app.post("/api/user/tasks")
 async def api_user_start_task(payload: dict[str, Any]):
     session_id = payload.get("session_id", "")
