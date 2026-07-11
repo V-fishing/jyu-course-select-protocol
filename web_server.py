@@ -604,6 +604,42 @@ async def api_user_task_logs(task_id: str):
     return {"running": task.get("running", False), "logs": task.get("logs", [])}
 
 
+@app.post("/api/user/courses/{uid}/candidate")
+async def api_user_candidate_course(uid: str, payload: dict[str, Any]):
+    """将课程加入候选/收藏列表（当前为本地预留接口，后续可对接教务系统候选接口）。"""
+    session_id = payload.get("session_id", "")
+    user = _user_sessions.get(session_id)
+    if not user:
+        raise HTTPException(status_code=401, detail="用户未登录或会话已过期，请重新登录")
+    course = _courses.get(uid)
+    if not course:
+        raise HTTPException(status_code=404, detail="课程不存在")
+    return {
+        "success": True,
+        "uid": uid,
+        "name": course["name"],
+        "message": "已加入候选列表（本地记录）",
+    }
+
+
+@app.post("/api/user/courses/{uid}/drop")
+async def api_user_drop_course(uid: str, payload: dict[str, Any]):
+    """退课（当前为本地预留接口，后续可对接教务系统退课接口）。"""
+    session_id = payload.get("session_id", "")
+    user = _user_sessions.get(session_id)
+    if not user:
+        raise HTTPException(status_code=401, detail="用户未登录或会话已过期，请重新登录")
+    course = _courses.get(uid)
+    if not course:
+        raise HTTPException(status_code=404, detail="课程不存在")
+    return {
+        "success": True,
+        "uid": uid,
+        "name": course["name"],
+        "message": "退课请求已记录（本地预留）",
+    }
+
+
 # ---------------------- WebSocket：用户日志 ----------------------
 
 @app.websocket("/ws/user/{task_id}")

@@ -73,6 +73,7 @@
         .course-item.restricted label {
             color: #a94442;
         }
+        button {
             background: #0066ff; color: #fff; border: none; cursor: pointer; margin-top: 15px;
             font-weight: 500;
         }
@@ -105,8 +106,16 @@
             border-bottom: 1px solid #f0f0f0;
         }
         .course-item:last-child { border-bottom: none; }
-        .course-item input { width: auto; margin: 0; }
-        .course-item label { margin: 0; font-weight: normal; cursor: pointer; flex: 1; }
+        .course-item .course-info { flex: 1; min-width: 0; }
+        .course-item .course-actions {
+            display: flex; gap: 6px; flex-shrink: 0;
+        }
+        .course-item .course-actions button {
+            margin: 0; padding: 4px 10px; font-size: 12px; width: auto;
+        }
+        .course-item .course-actions button:disabled {
+            background: #ccc; cursor: not-allowed;
+        }
         .empty { color: #999; text-align: center; padding: 20px; }
         .btn-row { display: flex; gap: 10px; }
         .btn-row button { flex: 1; }
@@ -193,16 +202,9 @@
         <div class="course-list" id="courseList">
             <div class="empty">正在加载课程列表...</div>
         </div>
-        <div style="margin-top:10px;">
-            <label>
-                <input type="checkbox" id="selectAll" onchange="toggleSelectAll()"> 全选
-            </label>
-            <span id="courseCount" style="float:right;color:#666;font-size:13px;"></span>
-        </div>
-
-        <div class="btn-row" style="margin-top:15px;">
-            <button class="success" onclick="startTask()" id="startBtn">开始抢课</button>
-            <button class="danger" onclick="stopTask()" id="stopBtn" disabled>停止抢课</button>
+        <div style="margin-top:10px; display:flex; justify-content:space-between; align-items:center;">
+            <span id="courseCount" style="color:#666;font-size:13px;"></span>
+            <button class="danger" onclick="stopTask()" id="stopBtn" disabled style="width:auto;margin:0;padding:6px 12px;font-size:13px;">停止全部任务</button>
         </div>
         <div class="status" id="taskStatus"></div>
     </div>
@@ -489,11 +491,15 @@ function renderCourseList(courses, filters = {}) {
         const div = document.createElement('div');
         div.className = 'course-item' + (hasData ? '' : ' no-data') + (restricted || notTargeted ? ' restricted' : '');
         div.innerHTML = `
-            <input type="checkbox" id="c_${uid}" value="${uid}" ${disabledAttr}>
-            <label for="c_${uid}">
-                ${info.name}${info.kch_id ? '（' + info.kch_id + '）' : ''}${badge}${warnBadge}
+            <div class="course-info">
+                <div>${info.name}${info.kch_id ? '（' + info.kch_id + '）' : ''}${badge}${warnBadge}</div>
                 ${metaText ? '<div class="meta">' + metaText + '</div>' : ''}
-            </label>
+            </div>
+            <div class="course-actions">
+                <button class="success" onclick="grabCourse('${uid}')" ${hasData && !restricted && !notTargeted ? '' : 'disabled'}>抢课</button>
+                <button class="secondary" onclick="candidateCourse('${uid}')">候选</button>
+                <button class="danger" onclick="dropCourse('${uid}')">退课</button>
+            </div>
         `;
         container.appendChild(div);
         visibleCount++;
@@ -509,126 +515,103 @@ function renderCourseList(courses, filters = {}) {
         : `共 ${total} 门`;
 }
 
-function toggleSelectAll() {
-    const checked = document.getElementById('selectAll').checked;
-    document.querySelectorAll('#courseList .course-item input[type="checkbox"]:not(:disabled)').forEach(cb => cb.checked = checked);
-}
+const activeTasks = {}; // task_id -> { uid, ws }
 
-function parseTimeSlots(text) {
-    if (!text) return [];
-    const weekdayMap = {'一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '日': 7};
-    const slots = [];
-    const parts = String(text).split(/[,，;；]/);
-    for (const part of parts) {
-        const m = part.trim().match(/星期([一二三四五六日])第(\d+)-(\d+)节\{(\d+)-(\d+)周\}/);
-        if (!m) continue;
-        slots.push({
-            weekday: weekdayMap[m[1]],
-            startPeriod: parseInt(m[2], 10),
-            endPeriod: parseInt(m[3], 10),
-            startWeek: parseInt(m[4], 10),
-            endWeek: parseInt(m[5], 10),
-        });
-    }
-    return slots;
-}
-
-function timeSlotsOverlap(aSlots, bSlots) {
-    for (const a of aSlots) {
-        for (const b of bSlots) {
-            if (a.weekday !== b.weekday) continue;
-            if (a.startWeek > b.endWeek || b.startWeek > a.endWeek) continue;
-            if (a.startPeriod > b.endPeriod || b.startPeriod > a.endPeriod) continue;
-            return true;
-        }
-    }
-    return false;
-}
-
-function validateSelection(selectedUids) {
-    const selected = selectedUids.map(uid => allCourses[uid]).filter(Boolean);
-
-    if (selected.length > 3) {
-        return {valid: false, message: '最多只能选择 3 门课程'};
-    }
-
-    const offline = selected.filter(c => (c.meta || {}).category !== '网课');
-
-    const campuses = new Set(offline.map(c => (c.meta || {}).campus).filter(Boolean));
-    if (campuses.size > 1) {
-        return {valid: false, message: '不能跨校区选课，请选择同一校区的课程（网课除外）'};
-    }
-
-    const offlineWithSlots = offline.map(c => ({course: c, slots: parseTimeSlots((c.meta || {}).time)}));
-    for (let i = 0; i < offlineWithSlots.length; i++) {
-        for (let j = i + 1; j < offlineWithSlots.length; j++) {
-            if (timeSlotsOverlap(offlineWithSlots[i].slots, offlineWithSlots[j].slots)) {
-                return {
-                    valid: false,
-                    message: `课程时间冲突：${offlineWithSlots[i].course.name} 与 ${offlineWithSlots[j].course.name}`
-                };
-            }
-        }
-    }
-
-    return {valid: true};
-}
-
-async function startTask() {
+async function grabCourse(uid) {
     if (!userSession) {
         showStatus('taskStatus', '请先登录', 'error');
         return;
     }
-    const selected = Array.from(document.querySelectorAll('#courseList .course-item input[type="checkbox"]:checked'))
-        .map(el => el.value)
-        .filter(uid => allCourses[uid] && allCourses[uid].has_data);
-    if (selected.length === 0) {
-        showStatus('taskStatus', '请至少选择一门可抢课程（带数据的课程）', 'error');
+    const course = allCourses[uid];
+    if (!course || !course.has_data) {
+        showStatus('taskStatus', '该课程暂无抢课数据', 'error');
         return;
     }
-    const validation = validateSelection(selected);
-    if (!validation.valid) {
-        showStatus('taskStatus', validation.message, 'error');
-        return;
-    }
-    const btn = document.getElementById('startBtn');
-    btn.disabled = true;
+    document.getElementById('stopBtn').disabled = false;
     try {
         const res = await api('/api/user/tasks', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({session_id: userSession, courses: selected})
+            body: JSON.stringify({session_id: userSession, courses: [uid]})
         });
-        currentTaskId = res.task_id;
-        document.getElementById('stopBtn').disabled = false;
-        showStatus('taskStatus', `任务已启动，共 ${res.launched} 门课程`, 'ok');
-        appendLog(`任务启动：${res.task_id}，共 ${res.launched} 门课程`, 'success');
+        activeTasks[res.task_id] = {uid};
+        showStatus('taskStatus', `已启动抢课：${course.name}`, 'ok');
+        appendLog(`任务启动：${res.task_id}，课程 ${course.name}`, 'success');
         connectWs(res.task_id);
     } catch (e) {
-        showStatus('taskStatus', '启动失败：' + e.message, 'error');
-        appendLog('启动失败：' + e.message, 'error');
-        btn.disabled = false;
+        showStatus('taskStatus', '抢课启动失败：' + e.message, 'error');
+        appendLog('抢课启动失败：' + e.message, 'error');
+    }
+}
+
+async function candidateCourse(uid) {
+    if (!userSession) {
+        showStatus('taskStatus', '请先登录', 'error');
+        return;
+    }
+    const course = allCourses[uid];
+    if (!course) return;
+    try {
+        const res = await api(`/api/user/courses/${uid}/candidate`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({session_id: userSession})
+        });
+        showStatus('taskStatus', `已加入候选：${res.name || course.name}`, 'ok');
+        appendLog(`加入候选：${res.name || course.name}${res.message ? ' | ' + res.message : ''}`, 'success');
+    } catch (e) {
+        showStatus('taskStatus', '候选操作失败：' + e.message, 'error');
+        appendLog('候选操作失败：' + e.message, 'error');
+    }
+}
+
+async function dropCourse(uid) {
+    if (!userSession) {
+        showStatus('taskStatus', '请先登录', 'error');
+        return;
+    }
+    const course = allCourses[uid];
+    if (!course) return;
+    if (!confirm(`确定要退课：${course.name}？`)) return;
+    try {
+        const res = await api(`/api/user/courses/${uid}/drop`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({session_id: userSession})
+        });
+        showStatus('taskStatus', `已退课：${res.name || course.name}`, 'ok');
+        appendLog(`退课：${res.name || course.name}${res.message ? ' | ' + res.message : ''}`, 'success');
+    } catch (e) {
+        showStatus('taskStatus', '退课失败：' + e.message, 'error');
+        appendLog('退课失败：' + e.message, 'error');
     }
 }
 
 async function stopTask() {
-    if (!currentTaskId) return;
+    const taskIds = Object.keys(activeTasks);
+    if (taskIds.length === 0) return;
     try {
-        await api(`/api/user/tasks/${currentTaskId}/stop`, {method: 'POST'});
+        await api(`/api/user/tasks/${taskIds[0]}/stop`, {method: 'POST'});
         showStatus('taskStatus', '已停止全部任务', 'info');
         appendLog('已停止全部任务', 'warn');
     } catch (e) {
         showStatus('taskStatus', '停止失败：' + e.message, 'error');
     }
-    document.getElementById('startBtn').disabled = false;
+    for (const taskId of taskIds) {
+        const t = activeTasks[taskId];
+        if (t && t.ws) t.ws.close();
+        delete activeTasks[taskId];
+    }
     document.getElementById('stopBtn').disabled = true;
 }
 
 function connectWs(taskId) {
-    if (ws) ws.close();
+    if (activeTasks[taskId] && activeTasks[taskId].ws) return;
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    ws = new WebSocket(`${proto}//${location.host}/ws/user/${taskId}`);
-    ws.onopen = () => appendLog('日志连接已建立', 'info');
+    const ws = new WebSocket(`${proto}//${location.host}/ws/user/${taskId}`);
+    if (!activeTasks[taskId]) activeTasks[taskId] = {};
+    activeTasks[taskId].ws = ws;
+    ws.onopen = () => appendLog(`日志连接已建立：${taskId}`, 'info');
     ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
         let type = 'info';
@@ -639,13 +622,22 @@ function connectWs(taskId) {
         const text = `${msg.user} / ${msg.course} → ${msg.status}${msg.message ? ' | ' + msg.message : ''}`;
         appendLog(text, type);
         if (msg.finished) {
-            document.getElementById('startBtn').disabled = false;
-            document.getElementById('stopBtn').disabled = true;
+            if (activeTasks[taskId] && activeTasks[taskId].ws) {
+                activeTasks[taskId].ws.close();
+            }
+            delete activeTasks[taskId];
+            document.getElementById('stopBtn').disabled = Object.keys(activeTasks).length === 0;
             appendLog('任务已结束', 'warn');
         }
     };
-    ws.onclose = () => appendLog('日志连接已关闭', 'warn');
-    ws.onerror = (e) => appendLog('日志连接异常', 'error');
+    ws.onclose = () => {
+        if (activeTasks[taskId]) {
+            delete activeTasks[taskId];
+            document.getElementById('stopBtn').disabled = Object.keys(activeTasks).length === 0;
+        }
+        appendLog(`日志连接已关闭：${taskId}`, 'warn');
+    };
+    ws.onerror = (e) => appendLog(`日志连接异常：${taskId}`, 'error');
 }
 
 loadCaptcha();
