@@ -416,9 +416,40 @@ function filterCourseList() {
 
 function matchesUserRule(ruleText) {
     if (!ruleText || (!userProfile.college && !userProfile.className)) return false;
-    const userText = (userProfile.college + ' ' + userProfile.className).toLowerCase();
-    const rule = String(ruleText).toLowerCase();
-    return userText.includes(rule) || rule.includes(userText);
+
+    const college = (userProfile.college || '').trim().toLowerCase();
+    const className = (userProfile.className || '').trim().toLowerCase();
+    const major = (className.match(/^([^\d]+)\d+/) || ['', ''])[1].trim();
+    const classYear = (className.match(/(\d{2})\d{2}/) || ['', ''])[1];
+    const userFull = (college + className).replace(/\s+/g, '');
+    const collegeNorm = college.replace(/\s+/g, '');
+
+    const parts = String(ruleText).toLowerCase().split(/[,，;；、]+/).map(p => p.trim()).filter(Boolean);
+
+    for (const part of parts) {
+        const normPart = part.replace(/\s+/g, '');
+
+        // 1. 直接子串匹配
+        if (userFull.includes(normPart) || normPart.includes(userFull)) return true;
+
+        // 2. 学院前缀 + 专业/班级
+        if (collegeNorm && normPart.startsWith(collegeNorm)) {
+            const remainder = normPart.slice(collegeNorm.length);
+            if (!remainder) return true;
+            if (major && remainder.includes(major)) return true;
+            if (className && remainder.includes(className.replace(/\s+/g, ''))) return true;
+        }
+
+        // 3. 年级匹配（如 2023级 对应 计算机2301班）
+        const ruleYearMatch = normPart.match(/(20\d{2})/);
+        if (ruleYearMatch && classYear) {
+            if (ruleYearMatch[1].slice(-2) === classYear) return true;
+        }
+
+        // 4. 班级名称包含该规则片段
+        if (className && className.includes(part)) return true;
+    }
+    return false;
 }
 
 function renderCourseList(courses, filters = {}) {
