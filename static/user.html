@@ -514,6 +514,66 @@ function toggleSelectAll() {
     document.querySelectorAll('#courseList .course-item input[type="checkbox"]:not(:disabled)').forEach(cb => cb.checked = checked);
 }
 
+function parseTimeSlots(text) {
+    if (!text) return [];
+    const weekdayMap = {'一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '日': 7};
+    const slots = [];
+    const parts = String(text).split(/[,，;；]/);
+    for (const part of parts) {
+        const m = part.trim().match(/星期([一二三四五六日])第(\d+)-(\d+)节\{(\d+)-(\d+)周\}/);
+        if (!m) continue;
+        slots.push({
+            weekday: weekdayMap[m[1]],
+            startPeriod: parseInt(m[2], 10),
+            endPeriod: parseInt(m[3], 10),
+            startWeek: parseInt(m[4], 10),
+            endWeek: parseInt(m[5], 10),
+        });
+    }
+    return slots;
+}
+
+function timeSlotsOverlap(aSlots, bSlots) {
+    for (const a of aSlots) {
+        for (const b of bSlots) {
+            if (a.weekday !== b.weekday) continue;
+            if (a.startWeek > b.endWeek || b.startWeek > a.endWeek) continue;
+            if (a.startPeriod > b.endPeriod || b.startPeriod > a.endPeriod) continue;
+            return true;
+        }
+    }
+    return false;
+}
+
+function validateSelection(selectedUids) {
+    const selected = selectedUids.map(uid => allCourses[uid]).filter(Boolean);
+
+    if (selected.length > 3) {
+        return {valid: false, message: '最多只能选择 3 门课程'};
+    }
+
+    const offline = selected.filter(c => (c.meta || {}).category !== '网课');
+
+    const campuses = new Set(offline.map(c => (c.meta || {}).campus).filter(Boolean));
+    if (campuses.size > 1) {
+        return {valid: false, message: '不能跨校区选课，请选择同一校区的课程（网课除外）'};
+    }
+
+    const offlineWithSlots = offline.map(c => ({course: c, slots: parseTimeSlots((c.meta || {}).time)}));
+    for (let i = 0; i < offlineWithSlots.length; i++) {
+        for (let j = i + 1; j < offlineWithSlots.length; j++) {
+            if (timeSlotsOverlap(offlineWithSlots[i].slots, offlineWithSlots[j].slots)) {
+                return {
+                    valid: false,
+                    message: `课程时间冲突：${offlineWithSlots[i].course.name} 与 ${offlineWithSlots[j].course.name}`
+                };
+            }
+        }
+    }
+
+    return {valid: true};
+}
+
 async function startTask() {
     if (!userSession) {
         showStatus('taskStatus', '请先登录', 'error');
@@ -524,6 +584,11 @@ async function startTask() {
         .filter(uid => allCourses[uid] && allCourses[uid].has_data);
     if (selected.length === 0) {
         showStatus('taskStatus', '请至少选择一门可抢课程（带数据的课程）', 'error');
+        return;
+    }
+    const validation = validateSelection(selected);
+    if (!validation.valid) {
+        showStatus('taskStatus', validation.message, 'error');
         return;
     }
     const btn = document.getElementById('startBtn');
