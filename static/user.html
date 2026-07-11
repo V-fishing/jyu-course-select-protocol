@@ -67,7 +67,12 @@
             cursor: default;
             color: #888;
         }
-        button {
+        .course-item.restricted {
+            background: #fff3f3;
+        }
+        .course-item.restricted label {
+            color: #a94442;
+        }
             background: #0066ff; color: #fff; border: none; cursor: pointer; margin-top: 15px;
             font-weight: 500;
         }
@@ -214,6 +219,7 @@ let userSession = null;
 let currentTaskId = null;
 let ws = null;
 let allCourses = {};
+let userProfile = {};
 
 document.getElementById('username').addEventListener('keypress', e => { if (e.key === 'Enter') doLogin(); });
 document.getElementById('password').addEventListener('keypress', e => { if (e.key === 'Enter') doLogin(); });
@@ -290,12 +296,16 @@ async function doLogin() {
             })
         });
         userSession = result.session_id;
-        document.getElementById('currentUser').textContent = `${result.username} 已登录`;
+        userProfile = {college: result.college || '', className: result.class_name || ''};
+        const profileText = userProfile.college || userProfile.className
+            ? `（${[userProfile.college, userProfile.className].filter(Boolean).join(' ')}）`
+            : '';
+        document.getElementById('currentUser').textContent = `${result.username} 已登录${profileText}`;
         document.getElementById('password').value = '';
         document.getElementById('loginCard').style.display = 'none';
         document.getElementById('taskCard').style.display = 'block';
         showStatus('taskStatus', '登录成功，请选择课程', 'ok');
-        appendLog(`登录成功：${result.username}`, 'success');
+        appendLog(`登录成功：${result.username}${profileText}`, 'success');
         loadCourses();
     } catch (e) {
         let msg = e.message;
@@ -404,6 +414,13 @@ function filterCourseList() {
     renderCourseList(allCourses, filters);
 }
 
+function matchesUserRule(ruleText) {
+    if (!ruleText || (!userProfile.college && !userProfile.className)) return false;
+    const userText = (userProfile.college + ' ' + userProfile.className).toLowerCase();
+    const rule = String(ruleText).toLowerCase();
+    return userText.includes(rule) || rule.includes(userText);
+}
+
 function renderCourseList(courses, filters = {}) {
     const container = document.getElementById('courseList');
     container.innerHTML = '';
@@ -420,19 +437,30 @@ function renderCourseList(courses, filters = {}) {
             continue;
         }
         const meta = info.meta || {};
+        const restriction = meta.restriction || '';
+        const target = meta.target || '';
         const metaText = [
             meta.campus, meta.college, meta.teacher, meta.credits ? meta.credits + '学分' : '',
-            meta.category, meta.time, meta.location
+            meta.category, meta.time, meta.location,
+            target ? '面向：' + target : '',
+            restriction ? '限制：' + restriction : ''
         ].filter(Boolean).join(' | ');
         const hasData = info.has_data;
-        const disabledAttr = hasData ? '' : 'disabled';
+        const restricted = restriction && matchesUserRule(restriction);
+        const notTargeted = target && !matchesUserRule(target);
+        const disabledAttr = (hasData && !restricted && !notTargeted) ? '' : 'disabled';
         const badge = hasData ? '' : '<span style="color:#999;font-size:12px;margin-left:8px;">[待爬取]</span>';
+        const warnBadge = restricted
+            ? '<span style="color:#dc3545;font-size:12px;margin-left:8px;">[限制对象]</span>'
+            : notTargeted
+                ? '<span style="color:#e67e22;font-size:12px;margin-left:8px;">[面向对象不符]</span>'
+                : '';
         const div = document.createElement('div');
-        div.className = 'course-item' + (hasData ? '' : ' no-data');
+        div.className = 'course-item' + (hasData ? '' : ' no-data') + (restricted || notTargeted ? ' restricted' : '');
         div.innerHTML = `
             <input type="checkbox" id="c_${uid}" value="${uid}" ${disabledAttr}>
             <label for="c_${uid}">
-                ${info.name}${info.kch_id ? '（' + info.kch_id + '）' : ''}${badge}
+                ${info.name}${info.kch_id ? '（' + info.kch_id + '）' : ''}${badge}${warnBadge}
                 ${metaText ? '<div class="meta">' + metaText + '</div>' : ''}
             </label>
         `;

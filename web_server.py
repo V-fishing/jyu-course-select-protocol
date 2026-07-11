@@ -15,6 +15,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+import requests
+from bs4 import BeautifulSoup
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -228,6 +230,8 @@ def _load_catalog(filename: str = "2026-2027-1-通识选修课.json") -> None:
                         "capacity": entry.get("选课人数", ""),
                         "weeks": entry.get("起始结束周", ""),
                         "notes": entry.get("选课备注", ""),
+                        "target": entry.get("面向对象", ""),
+                        "restriction": entry.get("限制对象", ""),
                     },
                     "has_data": False,
                 }
@@ -280,6 +284,8 @@ def _merge_catalog_meta(course: dict[str, Any]) -> dict[str, Any]:
             "capacity": entry.get("选课人数", ""),
             "weeks": entry.get("起始结束周", ""),
             "notes": entry.get("选课备注", ""),
+            "target": entry.get("面向对象", ""),
+            "restriction": entry.get("限制对象", ""),
         }
         course["meta"] = meta
 
@@ -444,6 +450,39 @@ async def api_captcha():
 
 # ---------------------- 用户端接口 ----------------------
 
+def _fetch_user_profile(cookie_str: str, user_agent: str | None = None) -> dict[str, str]:
+    """使用登录 Cookie 获取用户学院、班级等基本信息。"""
+    profile = {"college": "", "class_name": ""}
+    try:
+        session = requests.Session()
+        session.trust_env = False
+        session.headers.update({
+            "User-Agent": user_agent or Config.USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.9",
+            "Referer": f"{Config.BASE_URL}/xtgl/login_slogin.html",
+            "Cookie": cookie_str,
+        })
+        ts = int(time.time() * 1000)
+        url = f"{Config.BASE_URL}/xtgl/index_cxYhxxIndex.html?xt=jw&localeKey=zh_CN&_={ts}&gnmkdm=index"
+        resp = session.get(url, timeout=15, verify=Config.VERIFY_SSL)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.content, "lxml")
+        # 示例格式：<p>计算机学院 计算机2301班</p>
+        p_tag = soup.find("p")
+        if p_tag:
+            text = p_tag.get_text(strip=True)
+            parts = text.split()
+            if len(parts) >= 2:
+                profile["college"] = parts[0]
+                profile["class_name"] = parts[1]
+            elif len(parts) == 1:
+                profile["college"] = parts[0]
+    except Exception as exc:
+        logger.warning("获取用户 profile 失败: %s", exc)
+    return profile
+
+
 @app.post("/api/user/login")
 async def api_user_login(payload: dict[str, Any]):
     session_id = payload.get("session_id", "")
@@ -473,16 +512,21 @@ async def api_user_login(payload: dict[str, Any]):
         raise HTTPException(status_code=500, detail=f"登录异常: {exc}")
 
     user_session_id = str(uuid.uuid4())
+    profile = _fetch_user_profile(result["cookie_str"], result.get("user_agent"))
     _user_sessions[user_session_id] = {
         "username": username,
         "cookie": result["cookie_str"],
         "user_agent": result["user_agent"],
         "login_at": time.time(),
+        "college": profile["college"],
+        "class_name": profile["class_name"],
     }
     return {
         "success": True,
         "username": username,
         "session_id": user_session_id,
+        "college": profile["college"],
+        "class_name": profile["class_name"],
         "message": "登录成功",
     }
 
