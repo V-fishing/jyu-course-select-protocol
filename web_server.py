@@ -424,7 +424,11 @@ async def block_admin_on_public_host(request: Request, call_next):
     is_public_ngrok = host.endswith(".ngrok-free.dev") or "ngrok" in host
     is_admin_path = path.startswith("/admin") or path.startswith("/api/admin") or path == "/static/admin.html"
     if is_public_ngrok and is_admin_path:
-        return Response("管理端禁止通过公网入口访问", status_code=403)
+        return Response(
+            "管理端禁止通过公网入口访问",
+            status_code=403,
+            headers={"Content-Type": "text/plain; charset=utf-8"},
+        )
     return await call_next(request)
 
 
