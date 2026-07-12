@@ -58,10 +58,18 @@ _aggregate_map_lock = threading.Lock()
 _ADMIN_TOKEN = Config.WEB_ADMIN_TOKEN or Config.COOKIE_KEY or "admin"
 _WEAK_ADMIN_TOKENS = frozenset({"", "admin", "course-grabber-web"})
 
+# 用户端选课总开关（默认关闭，需管理员手动开放）
+_user_selection_enabled: bool = False
+
 
 def _require_admin(token: str) -> None:
     if token != _ADMIN_TOKEN:
         raise HTTPException(status_code=403, detail="管理口令错误")
+
+
+def _require_user_selection_enabled() -> None:
+    if not _user_selection_enabled:
+        raise HTTPException(status_code=403, detail="管理员尚未开放选课，请等待通知")
 
 
 # ---------------------- WebSocket 管理 ----------------------
@@ -339,21 +347,6 @@ def _load_default_courses() -> None:
         print(f"[警告] 加载默认课程库失败: {exc}")
 
 
-def _parse_course_submit_data(raw: str) -> str:
-    """从 cURL 命令或原始 form data 中提取课程提交数据字符串。"""
-    raw = raw.strip()
-    if raw.lower().startswith("curl"):
-        # 优先匹配 --data-raw / --data / -d 后的引号内容
-        match = re.search(r"--data(?:-raw)?\s+[\"']([^\"']+)[\"']", raw)
-        if match:
-            return match.group(1)
-        match = re.search(r"-d\s+[\"']([^\"']+)[\"']", raw)
-        if match:
-            return match.group(1)
-        raise ValueError("无法从 cURL 中提取提交数据，请直接粘贴 form data")
-    return raw
-
-
 def _import_courses_from_file(filename: str) -> dict[str, int]:
     """从 data/ 下的 JSON 文件导入课程；仅补充/更新已有课程条目，不新增无关条目。"""
     data_dir = Config.DATA_DIR
@@ -551,6 +544,8 @@ async def api_user_start_task(payload: dict[str, Any]):
     if not user:
         raise HTTPException(status_code=401, detail="用户未登录或会话已过期，请重新登录")
 
+    _require_user_selection_enabled()
+
     course_uids = payload.get("courses", [])
     if not course_uids:
         raise HTTPException(status_code=400, detail="至少选择一门课程")
@@ -568,6 +563,9 @@ async def api_user_start_task(payload: dict[str, Any]):
         course = _courses.get(uid)
         if not course:
             _push_log(aggregate_task_id, user["username"], "-", "课程不存在", f"uid={uid}")
+            continue
+        if not course.get("has_data"):
+            _push_log(aggregate_task_id, user["username"], course["name"], "暂无抢课数据", finished=True)
             continue
         sub_task_id = f"{aggregate_task_id}__{uid}"
         with _aggregate_map_lock:
@@ -611,9 +609,14 @@ async def api_user_candidate_course(uid: str, payload: dict[str, Any]):
     user = _user_sessions.get(session_id)
     if not user:
         raise HTTPException(status_code=401, detail="用户未登录或会话已过期，请重新登录")
+
+    _require_user_selection_enabled()
+
     course = _courses.get(uid)
     if not course:
         raise HTTPException(status_code=404, detail="课程不存在")
+    if not course.get("has_data"):
+        raise HTTPException(status_code=400, detail="该课程暂无抢课数据")
     return {
         "success": True,
         "uid": uid,
@@ -629,15 +632,26 @@ async def api_user_drop_course(uid: str, payload: dict[str, Any]):
     user = _user_sessions.get(session_id)
     if not user:
         raise HTTPException(status_code=401, detail="用户未登录或会话已过期，请重新登录")
+
+    _require_user_selection_enabled()
+
     course = _courses.get(uid)
     if not course:
         raise HTTPException(status_code=404, detail="课程不存在")
+    if not course.get("has_data"):
+        raise HTTPException(status_code=400, detail="该课程暂无抢课数据")
     return {
         "success": True,
         "uid": uid,
         "name": course["name"],
         "message": "退课请求已记录（本地预留）",
     }
+
+
+@app.get("/api/user/selection_status")
+async def api_user_selection_status():
+    """返回当前用户端选课开关状态。"""
+    return {"enabled": _user_selection_enabled}
 
 
 # ---------------------- WebSocket：用户日志 ----------------------
@@ -717,36 +731,6 @@ async def api_admin_import_courses(payload: dict[str, Any]):
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
     return {"success": True, **result}
-
-
-@app.post("/api/admin/courses/manual")
-async def api_admin_add_course_manual(payload: dict[str, Any]):
-    """手动添加单门课程：支持粘贴 cURL 命令或原始 form data。"""
-    _require_admin(payload.get("token", ""))
-    name = payload.get("name", "").strip()
-    raw = payload.get("data", "").strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="课程名称不能为空")
-    if not raw:
-        raise HTTPException(status_code=400, detail="课程提交数据不能为空")
-
-    try:
-        data_str = _parse_course_submit_data(raw)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"提交数据解析失败: {exc}")
-
-    existing_data = {info["data"] for info in _courses.values()}
-    if data_str in existing_data:
-        raise HTTPException(status_code=400, detail="该课程提交数据已存在")
-
-    uid = str(uuid.uuid4())
-    course = {
-        "name": name,
-        "kch_id": "",
-        "data": data_str,
-    }
-    _upsert_course(uid, course)
-    return {"success": True, "uid": uid, "name": name, "message": "课程添加成功"}
 
 
 @app.get("/api/admin/course_files")
@@ -840,6 +824,25 @@ async def api_admin_scrape_courses(payload: dict[str, Any]):
     thread = threading.Thread(target=_scrape, daemon=True)
     thread.start()
     return {"success": True, "message": "课程爬取任务已在后台启动，完成后自动更新课程库"}
+
+
+@app.get("/api/admin/user_selection")
+async def api_admin_get_user_selection(token: str = Query(...)):
+    """获取用户端选课开关状态。"""
+    _require_admin(token)
+    return {"enabled": _user_selection_enabled}
+
+
+@app.post("/api/admin/user_selection")
+async def api_admin_set_user_selection(payload: dict[str, Any]):
+    """设置用户端选课开关状态。"""
+    _require_admin(payload.get("token", ""))
+    global _user_selection_enabled
+    enabled = payload.get("enabled")
+    if not isinstance(enabled, bool):
+        raise HTTPException(status_code=400, detail="enabled 必须为布尔值")
+    _user_selection_enabled = enabled
+    return {"success": True, "enabled": _user_selection_enabled}
 
 
 # ---------------------- 运行入口 ----------------------

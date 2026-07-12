@@ -160,6 +160,8 @@
             <span id="currentUser"></span>
         </div>
 
+        <div id="selectionBanner" class="status info" style="display:none;"></div>
+
         <div class="filters">
             <div>
                 <label>校区</label>
@@ -222,6 +224,7 @@ let currentTaskId = null;
 let ws = null;
 let allCourses = {};
 let userProfile = {};
+let selectionEnabled = false;
 
 document.getElementById('username').addEventListener('keypress', e => { if (e.key === 'Enter') doLogin(); });
 document.getElementById('password').addEventListener('keypress', e => { if (e.key === 'Enter') doLogin(); });
@@ -309,6 +312,7 @@ async function doLogin() {
         showStatus('taskStatus', '登录成功，请选择课程', 'ok');
         appendLog(`登录成功：${result.username}${profileText}`, 'success');
         loadCourses();
+        loadSelectionStatus();
     } catch (e) {
         let msg = e.message;
         if (msg.includes('验证码')) {
@@ -338,6 +342,29 @@ async function loadCourses() {
         filterCourseList();
     } catch (e) {
         showStatus('taskStatus', '课程加载失败：' + e.message, 'error');
+    }
+}
+
+async function loadSelectionStatus() {
+    try {
+        const res = await api('/api/user/selection_status');
+        selectionEnabled = res.enabled;
+    } catch (e) {
+        selectionEnabled = false;
+    }
+    updateSelectionBanner();
+    filterCourseList();
+}
+
+function updateSelectionBanner() {
+    const banner = document.getElementById('selectionBanner');
+    if (selectionEnabled) {
+        banner.style.display = 'none';
+        banner.textContent = '';
+    } else {
+        banner.style.display = 'block';
+        banner.textContent = '管理员尚未开放选课，抢课/候选/退课按钮已禁用';
+        banner.className = 'status show info';
     }
 }
 
@@ -481,24 +508,28 @@ function renderCourseList(courses, filters = {}) {
         const hasData = info.has_data;
         const restricted = restriction && matchesUserRule(restriction);
         const notTargeted = target && !matchesUserRule(target);
-        const disabledAttr = (hasData && !restricted && !notTargeted) ? '' : 'disabled';
+        const canAct = selectionEnabled && hasData && !restricted && !notTargeted;
+        const disabledAttr = canAct ? '' : 'disabled';
         const badge = hasData ? '' : '<span style="color:#999;font-size:12px;margin-left:8px;">[待爬取]</span>';
         const warnBadge = restricted
             ? '<span style="color:#dc3545;font-size:12px;margin-left:8px;">[限制对象]</span>'
             : notTargeted
                 ? '<span style="color:#e67e22;font-size:12px;margin-left:8px;">[面向对象不符]</span>'
                 : '';
+        const selectionBadge = !selectionEnabled
+            ? '<span style="color:#856404;font-size:12px;margin-left:8px;">[未开放]</span>'
+            : '';
         const div = document.createElement('div');
         div.className = 'course-item' + (hasData ? '' : ' no-data') + (restricted || notTargeted ? ' restricted' : '');
         div.innerHTML = `
             <div class="course-info">
-                <div>${info.name}${info.kch_id ? '（' + info.kch_id + '）' : ''}${badge}${warnBadge}</div>
+                <div>${info.name}${info.kch_id ? '（' + info.kch_id + '）' : ''}${badge}${warnBadge}${selectionBadge}</div>
                 ${metaText ? '<div class="meta">' + metaText + '</div>' : ''}
             </div>
             <div class="course-actions">
-                <button class="success" onclick="grabCourse('${uid}')" ${hasData && !restricted && !notTargeted ? '' : 'disabled'}>抢课</button>
-                <button class="secondary" onclick="candidateCourse('${uid}')">候选</button>
-                <button class="danger" onclick="dropCourse('${uid}')">退课</button>
+                <button class="success" onclick="grabCourse('${uid}')" ${disabledAttr}>抢课</button>
+                <button class="secondary" onclick="candidateCourse('${uid}')" ${disabledAttr}>候选</button>
+                <button class="danger" onclick="dropCourse('${uid}')" ${disabledAttr}>退课</button>
             </div>
         `;
         container.appendChild(div);
@@ -641,6 +672,7 @@ function connectWs(taskId) {
 }
 
 loadCaptcha();
+setInterval(loadSelectionStatus, 10000);
 </script>
 </body>
 </html>

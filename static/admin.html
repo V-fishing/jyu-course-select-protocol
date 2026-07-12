@@ -142,19 +142,18 @@
                     <div class="status" id="scrapeStatus"></div>
                 </div>
             </div>
+        </div>
 
-            <hr style="border:none; border-top:1px solid #eee; margin:25px 0;">
-
-            <h4 style="margin-top:0;">手动添加课程</h4>
-            <div class="hint">
-                如果课程库不完整，可以手动添加。在教务系统选课页面按 F12 → Network → 找到选课请求 → 右键 Copy as cURL，粘贴到下方；或直接粘贴 form data。
+        <div class="card">
+            <h3 class="section-title">用户端控制</h3>
+            <p style="font-size:13px;color:#666;margin:0 0 10px;">
+                管理员确认课程目录已导入且抢课数据已补充后，方可开放用户端操作。关闭后用户端所有课程的抢课/候选/退课按钮将禁用。
+            </p>
+            <div class="btn-row">
+                <button class="success" onclick="setUserSelection(true)" id="enableSelectionBtn">开放选课</button>
+                <button class="danger" onclick="setUserSelection(false)" id="disableSelectionBtn">关闭选课</button>
             </div>
-            <label>课程名称</label>
-            <input type="text" id="manualCourseName" placeholder="例如：大学英语（三）">
-            <label>课程提交数据（cURL 或 form data）</label>
-            <textarea id="manualCourseData" rows="4" placeholder="curl 'https://...' --data-raw 'jxb_ids=...&kch_id=...'"></textarea>
-            <button class="success" onclick="addCourseManual()">添加课程</button>
-            <div class="status" id="manualAddStatus"></div>
+            <div class="status" id="selectionStatus"></div>
         </div>
 
         <div class="card">
@@ -269,6 +268,7 @@ async function doLogin() {
         appendLog(`管理员登录成功：${result.username}`, 'success');
         loadCourses();
         loadCourseFiles();
+        loadUserSelectionStatus();
     } catch (e) {
         let msg = e.message;
         if (msg.includes('口令')) {
@@ -432,27 +432,33 @@ async function scrapeCourses() {
     }
 }
 
-async function addCourseManual() {
-    const name = document.getElementById('manualCourseName').value.trim();
-    const data = document.getElementById('manualCourseData').value.trim();
-    if (!name || !data) {
-        showStatus('manualAddStatus', '课程名称和提交数据不能为空', 'error');
-        return;
-    }
+async function loadUserSelectionStatus() {
+    if (!adminLoggedIn) return;
     try {
-        const res = await api('/api/admin/courses/manual', {
+        const res = await api('/api/admin/user_selection');
+        updateSelectionButtons(res.enabled);
+    } catch (e) {
+        appendLog('加载用户端状态失败：' + e.message, 'error');
+    }
+}
+
+function updateSelectionButtons(enabled) {
+    document.getElementById('enableSelectionBtn').disabled = enabled;
+    document.getElementById('disableSelectionBtn').disabled = !enabled;
+}
+
+async function setUserSelection(enabled) {
+    try {
+        const res = await api('/api/admin/user_selection', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({token, name, data})
+            body: JSON.stringify({token, enabled})
         });
-        showStatus('manualAddStatus', `已添加：${res.name}`, 'ok');
-        appendLog(`手动添加课程：${res.name}`, 'success');
-        document.getElementById('manualCourseName').value = '';
-        document.getElementById('manualCourseData').value = '';
-        loadCourses();
+        updateSelectionButtons(res.enabled);
+        showStatus('selectionStatus', res.enabled ? '已开放用户选课' : '已关闭用户选课', 'ok');
+        appendLog(res.enabled ? '管理员开放用户选课' : '管理员关闭用户选课', 'success');
     } catch (e) {
-        showStatus('manualAddStatus', '添加失败：' + e.message, 'error');
-        appendLog('手动添加课程失败：' + e.message, 'error');
+        showStatus('selectionStatus', '设置失败：' + e.message, 'error');
     }
 }
 
