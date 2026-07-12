@@ -17,7 +17,7 @@ from typing import Any
 
 import requests
 from bs4 import BeautifulSoup
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -413,6 +413,19 @@ app = FastAPI(title="抢课 Web 服务", lifespan=lifespan)
 static_dir = ROOT / "static"
 static_dir.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+
+@app.middleware("http")
+async def block_admin_on_public_host(request: Request, call_next):
+    """当请求来自 ngrok 等公网入口时，禁止访问管理端路径。"""
+    host = request.headers.get("host", "").lower()
+    path = request.url.path.lower()
+    # ngrok 免费域名为 *.ngrok-free.dev；付费自定义域名可额外配置
+    is_public_ngrok = host.endswith(".ngrok-free.dev") or "ngrok" in host
+    is_admin_path = path.startswith("/admin") or path.startswith("/api/admin") or path == "/static/admin.html"
+    if is_public_ngrok and is_admin_path:
+        return Response("管理端禁止通过公网入口访问", status_code=403)
+    return await call_next(request)
 
 
 # ---------------------- 页面入口 ----------------------
