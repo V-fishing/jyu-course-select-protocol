@@ -143,8 +143,12 @@ python run_web.py --ngrok --open
 # 1. 先启动本地服务
 python run_web.py
 
-# 2. 另开终端，用本地 ngrok 映射 8000 端口（示例路径，请替换为你自己的 ngrok.exe 路径）
+# 2. 另开终端，用本地 ngrok 映射 8000 端口
+# Git Bash / MSYS 环境（反斜杠会被转义，推荐用 Unix 路径写法）
 /e/Desktop_fish/教评代填-协议级/ngrok.exe http 8000
+
+# CMD / PowerShell 环境（直接用 Windows 路径）
+# E:\Desktop_fish\教评代填-协议级\ngrok.exe http 8000
 ```
 
 > 使用 ngrok 前请在 ngrok 官网注册后执行 `ngrok config add-authtoken <your_token>` 完成授权。公网暴露时务必设置复杂的 `WEB_ADMIN_TOKEN`，且仅将地址分享给可信人员。
