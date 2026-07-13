@@ -383,6 +383,85 @@ def _import_courses_from_file(filename: str) -> dict[str, int]:
     return {"imported": imported, "skipped": skipped, "total": len(raw)}
 
 
+def _import_courses_from_student_json(filename: str) -> dict[str, int]:
+    """从学生课程查询 JSON 导入课程数据（如 courses_241040117.json）。
+
+    该格式包含 jxb_id、kch_id、kcmc 等字段，可用来补全目录条目的抢课数据。
+    注意：data 字符串中的 xkkz_id、xklc、xkxqm 等参数会尽量推断，若与目标学生不一致，
+    实际提交时可能需要重新抓取该学生的真实表单数据。
+    """
+    data_dir = Config.DATA_DIR
+    target = (data_dir / filename).resolve()
+    if not str(target).startswith(str(data_dir.resolve())) or not target.exists():
+        raise ValueError("课程文件不存在或路径非法")
+
+    raw = json.loads(target.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError("课程文件格式不正确")
+
+    student = raw.get("student", {})
+    courses = raw.get("courses", [])
+    if not isinstance(courses, list):
+        raise ValueError("courses 字段格式不正确")
+
+    njdm_id = str(student.get("njdm_id", "")).strip()
+    zyh_id = str(student.get("zyh_id", "")).strip()
+    year = str(student.get("njdm_id", "2026")).strip()[:4]
+
+    imported = 0
+    skipped = 0
+    existing_data = {info["data"] for info in _courses.values()}
+
+    for item in courses:
+        if not isinstance(item, dict):
+            continue
+        jxb_ids = str(item.get("jxb_id", "")).strip()
+        kch_id = str(item.get("kch_id", "")).strip()
+        kcmc = str(item.get("kcmc", "")).strip()
+        kklxdm = str(item.get("kklxdm", "10")).strip()
+        xf = str(item.get("xf", "2.0")).strip()
+        if not jxb_ids or not kch_id or not kcmc:
+            skipped += 1
+            continue
+
+        row_params = {
+            "xkxnm": year,
+            "xkxqm": "1",
+            "zyh_id": zyh_id,
+            "njdm_id": njdm_id,
+            "kklxdm": kklxdm,
+            "xkkz_id": "",
+            "xklc": "1",
+            "rlkz": "0",
+            "hidsfxz": "0",
+            "kch_id": kch_id,
+            "jxb_ids": jxb_ids,
+            "rwlx": "1",
+        }
+        # 按常见顺序拼接，与中国高校教务系统 form data 风格保持一致
+        ordered_keys = [
+            "xkxnm", "xkxqm", "zyh_id", "njdm_id", "kklxdm", "xkkz_id",
+            "xklc", "rlkz", "hidsfxz", "kch_id", "jxb_ids", "rwlx",
+        ]
+        data_str = "&".join(f"{k}={row_params[k]}" for k in ordered_keys)
+        if data_str in existing_data:
+            skipped += 1
+            continue
+
+        course = {
+            "name": kcmc,
+            "kch_id": kch_id,
+            "data": data_str,
+        }
+        if _upsert_course(str(uuid.uuid4()), course, allow_new=False):
+            existing_data.add(data_str)
+            imported += 1
+        else:
+            skipped += 1
+
+    return {"imported": imported, "skipped": skipped, "total": len(courses)}
+
+
 # ---------------------- 启动/关闭 ----------------------
 
 _engine: GrabEngine | None = None
@@ -745,6 +824,20 @@ async def api_admin_import_courses(payload: dict[str, Any]):
         raise HTTPException(status_code=400, detail="请选择课程文件")
     try:
         result = _import_courses_from_file(filename)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return {"success": True, **result}
+
+
+@app.post("/api/admin/courses/import_student_json")
+async def api_admin_import_student_json(payload: dict[str, Any]):
+    """从学生课程查询 JSON 导入课程数据，补全 jxb_ids/kch_id/data。"""
+    _require_admin(payload.get("token", ""))
+    filename = payload.get("filename", "").strip()
+    if not filename:
+        raise HTTPException(status_code=400, detail="请选择学生课程 JSON 文件")
+    try:
+        result = _import_courses_from_student_json(filename)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
     return {"success": True, **result}
